@@ -46,12 +46,13 @@ fn short(id: P) -> &'static str {
         P::Flight => "Flight speed",
         P::FlightDepth => "Flight depth",
         P::LookAhead => "Look ahead",
+        P::LyricsOffset => "Lyrics sync",
         other => crate::params::def_of(other).name,
     }
 }
 
 /// Whether a button's switch is on, for switches that have a state.
-fn lit(action: Action, params: &Params, show_panel: bool, show_surface: bool) -> Option<bool> {
+fn lit(action: Action, params: &Params, show_panel: bool, show_surface: bool, lyrics: bool) -> Option<bool> {
     Some(match action {
         Action::Toggle(Toggle::FlipX) => params.flip_x,
         Action::Toggle(Toggle::FlipY) => params.flip_y,
@@ -61,6 +62,7 @@ fn lit(action: Action, params: &Params, show_panel: bool, show_surface: bool) ->
         Action::Toggle(Toggle::ReversePalette) => params.reverse_palette,
         Action::TogglePanel => show_panel,
         Action::ToggleSurface => show_surface,
+        Action::ToggleLyrics => lyrics,
         _ => return None,
     })
 }
@@ -79,6 +81,7 @@ pub struct Surface<'a> {
     pub controller: &'a mut Controller,
     pub show_panel: bool,
     pub show_surface: bool,
+    pub lyrics: bool,
 }
 
 impl Surface<'_> {
@@ -248,7 +251,7 @@ impl Surface<'_> {
         font: &FontId,
     ) -> Option<(egui::Id, String, Rect)> {
         let action = self.bindings.buttons.get(&cc).copied();
-        let state = action.and_then(|a| lit(a, self.params, self.show_panel, self.show_surface));
+        let state = action.and_then(|a| lit(a, self.params, self.show_panel, self.show_surface, self.lyrics));
         let pressed = self.controller.pressed_recently(cc);
         let fill = if state == Some(true) || pressed { ON } else { PART };
         painter.rect_filled(rect, 3.0, fill);

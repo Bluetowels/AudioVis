@@ -5,7 +5,11 @@ mod analysis;
 #[cfg(target_os = "android")]
 mod android;
 mod audio;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod lyrics;
 mod midi;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod nowplaying;
 mod params;
 mod render;
 mod surface;
@@ -57,6 +61,13 @@ struct Settings {
     /// Ask for HDR output on the next start.
     #[serde(default)]
     hdr: bool,
+    /// Show lyrics. Off until asked for, because finding them sends the
+    /// title and artist of what is playing to lrclib.net.
+    #[serde(default)]
+    lyrics: bool,
+    /// The lyrics sync offset in ms for each music app, by the app's id.
+    #[serde(default)]
+    lyrics_offsets: std::collections::BTreeMap<String, f32>,
 }
 
 #[cfg(windows)]
@@ -152,6 +163,12 @@ struct Options {
     overrides: Vec<(String, f32)>,
     /// Self-test: show this slider's description as if the pointer were resting on it.
     demo_hint: Option<String>,
+    /// Show lyrics on this run, whatever the saved setting.
+    lyrics: bool,
+    /// Show the lyrics in this LRC file (or the one beside this audio file,
+    /// with the same name), timed from when the app starts,
+    /// instead of looking up what is playing.
+    lyrics_file: Option<PathBuf>,
     midi_port: String,
     /// Take a screenshot to this path after `seconds`, print timings and exit.
     selftest: Option<PathBuf>,
@@ -173,6 +190,8 @@ impl Default for Options {
             underlay: false,
             overrides: Vec::new(),
             demo_hint: None,
+            lyrics: false,
+            lyrics_file: None,
             midi_port: MIDI_PORT.into(),
             selftest: None,
             seconds: 3.0,
@@ -207,6 +226,11 @@ fn parse_options() -> Options {
             "--stereo" => o.stereo = true,
             "--underlay" => o.underlay = true,
             "--show-hint" => o.demo_hint = args.next(),
+            "--lyrics" => o.lyrics = true,
+            "--lyrics-file" => {
+                o.lyrics_file = args.next().map(PathBuf::from);
+                o.lyrics = true;
+            }
             // Self-test helpers: set any slider by key, e.g. --set bass_amount=2
             "--set" => {
                 if let Some((key, value)) = args.next().as_deref().and_then(|s| s.split_once('=')) {
@@ -467,6 +491,18 @@ struct App {
     hdr_pattern: bool,
     /// Seconds of 3D flight flown so far, scaled by the flight speed.
     flight_time: f32,
+    /// Whether lyrics are shown.
+    lyrics: bool,
+    /// Watches what other apps are playing; started the first time lyrics are on.
+    now_playing: Option<nowplaying::NowPlaying>,
+    lookup: lyrics::Lookup,
+    /// Lyrics given on the command line, shown instead of looking any up.
+    lyrics_file: Option<std::sync::Arc<[lyrics::Line]>>,
+    /// The track lyrics are being shown for, for the panel.
+    lyrics_track: Option<nowplaying::Track>,
+    /// The app whose sync offset is on the slider, and every app's offset.
+    lyrics_app: String,
+    lyrics_offsets: std::collections::BTreeMap<String, f32>,
     /// Recent frame times in ms, newest last, for the graph.
     frame_history: std::collections::VecDeque<f32>,
     preset_name: String,
@@ -500,6 +536,9 @@ impl App {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok());
         let show_surface = options.surface || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.show_surface));
+        let lyrics = options.lyrics || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.lyrics));
+        let lyrics_offsets = saved.as_ref().filter(|_| options.selftest.is_none()).map(|s| s.lyrics_offsets.clone()).unwrap_or_default();
+        let lyrics_file = options.lyrics_file.as_deref().and_then(lyrics::sidecar).map(Into::into);
         let (mut params, mut bindings, saved_source, show_hints, show_fps, show_fps_graph, collapsed) = match saved {
             // A self-test always runs on defaults so results are comparable.
             Some(s) if options.selftest.is_none() => {
@@ -576,6 +615,13 @@ impl App {
             hdr_active,
             hdr_pattern: false,
             flight_time: 0.0,
+            lyrics,
+            now_playing: None,
+            lookup: lyrics::Lookup::new(config_dir().join("lyrics")),
+            lyrics_file,
+            lyrics_track: None,
+            lyrics_app: String::new(),
+            lyrics_offsets,
             frame_history: std::collections::VecDeque::with_capacity(FPS_HISTORY),
             preset_name: String::new(),
             presets: preset_names(),
@@ -610,6 +656,8 @@ impl App {
             vsync: self.vsync,
             show_surface: self.show_surface,
             hdr: self.hdr,
+            lyrics: self.lyrics,
+            lyrics_offsets: self.lyrics_offsets.clone(),
         };
         serde_json::to_string_pretty(&settings).ok()
     }
@@ -699,7 +747,10 @@ impl App {
     fn load_preset(&mut self, name: &str) {
         let path = config_dir().join("presets").join(format!("{name}.json"));
         if let Some(saved) = std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<SavedParams>(&t).ok()) {
+            // The lyrics offset belongs to the music app, not the preset.
+            let offset = self.params.target(P::LyricsOffset);
             self.params = Params::from_saved(&saved);
+            self.params.set(P::LyricsOffset, offset);
             self.controller.release_all();
             self.preset_name = name.to_string();
         }
@@ -1036,6 +1087,146 @@ impl App {
         }
     }
 
+    /// The track as the lyrics search wants it.
+    fn lyrics_query(track: &nowplaying::Track) -> lyrics::Query {
+        lyrics::Query {
+            title: track.title.clone(),
+            artist: track.artist.clone(),
+            album: track.album.clone(),
+            duration: track.duration,
+        }
+    }
+
+    /// One line for the panel: what is playing and whether it has lyrics.
+    #[cfg(windows)]
+    fn lyrics_status(&self) -> String {
+        if self.lyrics_file.is_some() {
+            return "Showing the lyrics file given on the command line.".into();
+        }
+        let Some(track) = &self.lyrics_track else {
+            return "Nothing is playing in an app that reports to Windows' media controls.".into();
+        };
+        // "Spotify.exe" or "WiMPMusic.27241E05630EA_kn85bz84x7te4!TIDAL".
+        let app = track.app.rsplit('!').next().unwrap_or(&track.app).trim_end_matches(".exe");
+        let state = match self.lookup.state(&Self::lyrics_query(track)) {
+            _ if track.title.is_empty() => "no title reported".to_string(),
+            lyrics::State::Looking => "looking for lyrics…".to_string(),
+            lyrics::State::Synced(lines) => format!("{} lines of lyrics", lines.len()),
+            lyrics::State::Missing(why) => why,
+        };
+        format!("{app}: {} by {}: {state}", track.title, track.artist)
+    }
+
+    /// The line being sung in the middle of the picture, the one before it
+    /// fading out above and the one to come small below.
+    fn draw_lyrics(&mut self, painter: &egui::Painter, picture: egui::Rect) {
+        /// A line is brought in this long before it is sung, so it can be read in time.
+        const LEAD_S: f64 = 0.15;
+        /// How long the line before takes to fade away.
+        const LEAVE_S: f64 = 0.5;
+        if !self.lyrics {
+            return;
+        }
+        let (lines, position, app) = match &self.lyrics_file {
+            Some(lines) => (Some(lines.clone()), Some(self.started.elapsed().as_secs_f64()), "file".to_string()),
+            None => {
+                let Some(now) = self.now_playing.get_or_insert_with(nowplaying::NowPlaying::start).now() else {
+                    self.lyrics_track = None;
+                    return;
+                };
+                let query = Self::lyrics_query(&now.track);
+                if !query.title.is_empty() {
+                    self.lookup.want(&query);
+                }
+                let lines = match self.lookup.state(&query) {
+                    lyrics::State::Synced(lines) => Some(lines),
+                    _ => None,
+                };
+                let app = now.track.app.clone();
+                self.lyrics_track = Some(now.track);
+                (lines, now.position, app)
+            }
+        };
+
+        // Each music app has its own sync offset; the slider shows the current app's.
+        let offset = self.params.target(P::LyricsOffset);
+        if app != self.lyrics_app {
+            let first = self.lyrics_app.is_empty();
+            let remembered = self.lyrics_offsets.get(&app).copied().unwrap_or(if first { offset } else { 0.0 });
+            self.params.set(P::LyricsOffset, remembered);
+            self.controller.release(&self.bindings, P::LyricsOffset);
+            self.lyrics_app = app;
+        } else if self.lyrics_offsets.get(&app).copied().unwrap_or(0.0) != offset {
+            self.lyrics_offsets.insert(app, offset);
+        }
+
+        let (Some(lines), Some(position)) = (lines, position) else { return };
+        let t = position - self.params.get(P::LyricsOffset) as f64 / 1000.0 + LEAD_S;
+        let started = lines.partition_point(|line| line.start <= t);
+        let current = started.checked_sub(1).map(|i| &lines[i]);
+        let previous = started.checked_sub(2).map(|i| &lines[i]);
+        let next = lines.get(started);
+
+        // Whole half points only, so a size is drawn from the same glyphs every frame.
+        let size = ((self.params.get(P::LyricsSize) / 100.0 * picture.height()) * 2.0).round().max(16.0) / 2.0;
+        // Brightness follows the bass. In HDR the words stay at the panel's
+        // steady white, well under the picture's peaks.
+        let level = if self.hdr_active || !self.params.bass_boost { 1.0 } else { 0.6 + 0.4 * self.bass_env };
+        let smooth = |x: f64| {
+            let x = x.clamp(0.0, 1.0) as f32;
+            x * x * (3.0 - 2.0 * x)
+        };
+        // Draw centred text with `y` at its top (anchor 0), middle (0.5) or
+        // bottom (1). Returns its height.
+        let text = |pieces: &[(&str, f32)], size: f32, y: f32, anchor: f32, opacity: f32| -> f32 {
+            let mut job = egui::text::LayoutJob::default();
+            job.wrap.max_width = picture.width() * 0.86;
+            job.halign = egui::Align::Center;
+            for (piece, brightness) in pieces {
+                let color = egui::Color32::from_gray((255.0 * brightness * level).round() as u8).gamma_multiply(opacity);
+                job.append(piece, 0.0, egui::TextFormat { font_id: egui::FontId::proportional(size), color, ..Default::default() });
+            }
+            let galley = painter.layout_job(job);
+            let height = galley.size().y;
+            let at = egui::pos2(picture.center().x, y - anchor * height);
+            // A dark copy behind, on each diagonal, keeps it readable over a bright picture.
+            let shadow = egui::Color32::from_black_alpha((210.0 * opacity) as u8);
+            let d = (size * 0.045).max(1.0);
+            for offset in [egui::vec2(d, d), egui::vec2(-d, d), egui::vec2(d, -d), egui::vec2(-d, -d)] {
+                painter.galley_with_override_text_color(at + offset, galley.clone(), shadow);
+            }
+            painter.galley(at, galley, egui::Color32::WHITE);
+            height
+        };
+
+        let middle = picture.center().y;
+        let age = current.map_or(f64::MAX, |line| t - line.start);
+        let arrive = smooth(age / LEAD_S);
+        let mut height = size * 1.2;
+        if let Some(line) = current.filter(|line| !line.text.is_empty()) {
+            // A line left standing through a long gap dims, so it is not taken for the one being sung.
+            let held = 1.0 - 0.65 * smooth((age - 10.0) / 2.0);
+            // With word timings, each word brightens as it is sung.
+            let pieces: Vec<(&str, f32)> = if line.words.is_empty() {
+                vec![(line.text.as_str(), 1.0)]
+            } else {
+                line.words.iter().map(|(start, word)| (word.as_str(), 0.5 + 0.5 * smooth((t - LEAD_S - start) / 0.12))).collect()
+            };
+            height = text(&pieces, size, middle + (1.0 - arrive) * 0.3 * size, 0.5, arrive * held);
+        }
+        let gap = 0.35 * size;
+        if let Some(line) = previous.filter(|line| !line.text.is_empty() && age < LEAVE_S) {
+            // It moves up out of the way of the new line as it fades.
+            let rise = smooth(age / (0.5 * LEAVE_S));
+            let bottom = middle + 0.6 * size + (-height / 2.0 - gap - 0.6 * size) * rise;
+            text(&[(line.text.as_str(), 1.0)], size, bottom, 1.0, 1.0 - smooth(age / LEAVE_S));
+        }
+        if let Some(line) = next.filter(|line| self.params.lyrics_preview && !line.text.is_empty()) {
+            let opacity = 0.5 * if current.is_some() { arrive } else { 1.0 };
+            text(&[(line.text.as_str(), 0.85)], (size * 0.5 * 2.0).round() / 2.0, middle + height / 2.0 + gap, 0.0, opacity);
+        }
+    }
+
     /// FPS counter and graph in the top-left corner of the picture.
     fn draw_fps(&self, painter: &egui::Painter, picture: egui::Rect) {
         let origin = picture.left_top() + egui::vec2(10.0, 8.0);
@@ -1141,6 +1332,9 @@ impl App {
         let d = def_of(id);
         let mut value = self.params.target(id);
         let mut slider = egui::Slider::new(&mut value, d.min..=d.max).logarithmic(d.log);
+        if id == P::LyricsOffset {
+            slider = slider.step_by(10.0);
+        }
         slider = match id {
             P::Palette => slider.custom_formatter(|v, _| PALETTES[(v.round() as usize).min(PALETTES.len() - 1)].name.to_string()),
             P::FreqLow | P::FreqHigh => slider.custom_formatter(|v, _| format!("{:.0} Hz", F_MIN as f64 * 2f64.powf(v))),
@@ -1410,6 +1604,25 @@ impl App {
             }
             ui.separator();
 
+            // Lyrics need to know what is playing, which only the Windows build can ask.
+            #[cfg(windows)]
+            {
+            if self.section(ui, "Lyrics") {
+            let r = ui.checkbox(&mut self.lyrics, "Show lyrics");
+            self.describe(&r, "Shows the words of the song over the picture, in time with the music. AudioVis reads the title and artist of what is playing from Windows and looks the lyrics up on lrclib.net, a free, crowd-sourced lyrics site. So while this is on, the title, artist, album and length of each track you play are sent to that site; nothing is sent while it is off. Results are kept on this PC, so each track is only asked about once. On the controller: the marker SET button.");
+            if self.lyrics {
+                ui.small(self.lyrics_status());
+                self.slider(ui, P::LyricsSize);
+                let r = ui.checkbox(&mut self.params.lyrics_preview, "Show the next line");
+                self.describe(&r, "Show the line to come, small and dim, under the one being sung.");
+                self.slider(ui, P::LyricsOffset);
+                ui.small("The offset is kept separately for each music app. On the controller: the marker < and > buttons move it 10 ms.");
+            }
+            ui.small("Lyrics come from LRCLIB (lrclib.net) and remain the copyright of their owners.");
+            }
+            ui.separator();
+            }
+
             if self.section(ui, "Presets") {
             ui.horizontal(|ui| {
                 let r = ui.add(egui::TextEdit::singleline(&mut self.preset_name).hint_text("name").desired_width(150.0));
@@ -1516,7 +1729,14 @@ impl eframe::App for App {
 
         #[cfg(target_os = "android")]
         self.controller.reconnect(&self.options.midi_port);
-        self.controller.apply(&mut self.params, &mut self.bindings, &mut self.learning, &mut self.show_panel, &mut self.show_surface);
+        self.controller.apply(
+            &mut self.params,
+            &mut self.bindings,
+            &mut self.learning,
+            &mut self.show_panel,
+            &mut self.show_surface,
+            &mut self.lyrics,
+        );
         self.params.glide(dt);
         // The panel is drawn at the picture's base brightness.
         eframe::egui_wgpu::HDR_UI_SCALE.store((self.params.get(P::HdrBase) / 80.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
@@ -1548,6 +1768,7 @@ impl eframe::App for App {
                 rect,
                 render::Frame { uniforms: self.uniforms(gain, glow, rect.width() / rect.height().max(1.0)), levels },
             ));
+            self.draw_lyrics(ui.painter(), rect);
             self.draw_fps(ui.painter(), rect);
             if self.hdr_active && self.hdr_pattern {
                 let labels = [
@@ -1571,6 +1792,7 @@ impl eframe::App for App {
                     controller: &mut self.controller,
                     show_panel: self.show_panel,
                     show_surface: true,
+                    lyrics: self.lyrics,
                 }
                 .show(ui, rect);
                 if hovered.is_some() {
@@ -1638,6 +1860,10 @@ impl eframe::App for App {
                     self.recent.last().copied().unwrap_or(0.0),
                     self.recent.iter().filter(|t| **t > 9.0).count()
                 );
+                #[cfg(windows)]
+                if self.lyrics {
+                    println!("selftest: lyrics: {}", self.lyrics_status());
+                }
                 let (ppp, info) = (ctx.pixels_per_point(), ctx.input(|i| i.viewport().clone()));
                 println!(
                     "selftest: pixels per point {ppp}, fullscreen {:?}, monitor {:?}, inner {:?}",

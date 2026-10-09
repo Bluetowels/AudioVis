@@ -16,10 +16,14 @@ pub enum Action {
     TogglePanel,
     /// Show or hide the picture of the controller.
     ToggleSurface,
+    ToggleLyrics,
+    /// Move the lyrics 10 ms earlier or later against the music.
+    LyricsEarlier,
+    LyricsLater,
 }
 
 impl Action {
-    pub const ALL: [Action; 12] = [
+    pub const ALL: [Action; 15] = [
         Action::Toggle(Toggle::FlipX),
         Action::Toggle(Toggle::FlipY),
         Action::MirrorNext,
@@ -32,6 +36,9 @@ impl Action {
         Action::PaletteNext,
         Action::TogglePanel,
         Action::ToggleSurface,
+        Action::ToggleLyrics,
+        Action::LyricsEarlier,
+        Action::LyricsLater,
     ];
 
     /// A name short enough to sit beside a button.
@@ -49,6 +56,9 @@ impl Action {
             Action::PalettePrevious => "Pal -",
             Action::TogglePanel => "Panel",
             Action::ToggleSurface => "Controller",
+            Action::ToggleLyrics => "Lyrics",
+            Action::LyricsEarlier => "Lyr -",
+            Action::LyricsLater => "Lyr +",
         }
     }
 
@@ -66,6 +76,9 @@ impl Action {
             Action::PalettePrevious => "Previous palette",
             Action::TogglePanel => "Show or hide the settings panel",
             Action::ToggleSurface => "Show or hide this picture of the controller",
+            Action::ToggleLyrics => "Lyrics on or off",
+            Action::LyricsEarlier => "Move the lyrics 10 ms earlier",
+            Action::LyricsLater => "Move the lyrics 10 ms later",
         }
     }
 }
@@ -101,7 +114,8 @@ impl Default for Bindings {
                 continuous.insert(16 + i as u8, def_of(p).key.to_string());
             }
         }
-        // S buttons, left to right, then the track arrows for palettes.
+        // S buttons, left to right, then the track arrows for palettes and
+        // the marker buttons for lyrics (every knob and fader is taken).
         let buttons = BTreeMap::from([
             (32, Action::Toggle(Toggle::FlipX)),
             (33, Action::Toggle(Toggle::FlipY)),
@@ -114,6 +128,9 @@ impl Default for Bindings {
             (64, Action::ShapeNext),
             (58, Action::PalettePrevious),
             (59, Action::PaletteNext),
+            (60, Action::ToggleLyrics),
+            (61, Action::LyricsEarlier),
+            (62, Action::LyricsLater),
         ]);
         Self { continuous, buttons }
     }
@@ -287,6 +304,7 @@ impl Controller {
         learning: &mut Option<P>,
         show_panel: &mut bool,
         show_surface: &mut bool,
+        lyrics: &mut bool,
     ) {
         let Some(events) = &self.events else { return };
         let messages: Vec<(u8, u8)> = events.try_iter().collect();
@@ -307,6 +325,9 @@ impl Controller {
                     Action::PalettePrevious => params.step_palette(-1),
                     Action::TogglePanel => *show_panel = !*show_panel,
                     Action::ToggleSurface => *show_surface = !*show_surface,
+                    Action::ToggleLyrics => *lyrics = !*lyrics,
+                    Action::LyricsEarlier => params.set(P::LyricsOffset, params.target(P::LyricsOffset) - 10.0),
+                    Action::LyricsLater => params.set(P::LyricsOffset, params.target(P::LyricsOffset) + 10.0),
                 }
                 self.pressed.insert(cc, std::time::Instant::now());
                 continue;

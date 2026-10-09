@@ -196,6 +196,8 @@ Rest the pointer on any setting to see a description of what it does; the "Descr
 | `--no-vsync` | Uncap the frame rate for this run |
 | `--midi-port NAME` | Use a specific MIDI input port |
 | `--set key=value` | Set any slider by its key, e.g. `--set bass_amount=2` |
+| `--lyrics` | Show lyrics on this run (Windows only; see [Lyrics](#lyrics)) |
+| `--lyrics-file song.lrc` | Show the lyrics in this LRC file, timed from when the app starts, instead of looking any up |
 
 The app uses Vulkan (Metal on macOS) on the high-performance GPU by default. To override this, set the `WGPU_BACKEND` and `WGPU_POWER_PREF` environment variables.
 
@@ -291,8 +293,28 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 | HDR peak brightness | 1000 nits | 200 to 2000 | HDR only: how bright the very loudest parts go |
 | HDR test pattern | off | | HDR only: white patches at 80, 200, 400, 800 and 1600 nits, plus the base and peak |
 
-### App
+### Lyrics
 
+Windows only.
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Show lyrics | off | | Shows the words of the song over the picture, in time with the music |
+| Lyrics size | 5% of the picture's height | 2 to 12 | Height of the line being sung |
+| Show the next line | on | | The line to come, small and dim, under the one being sung |
+| Lyrics sync offset | 0 ms | -1000 to 1000, in steps of 10 | Moves the lyrics earlier (negative) or later (positive); kept separately for each music app |
+
+The line being sung sits in the middle of the picture. The line before fades out above it and the line to come waits below. Each line appears about 150 ms before it's sung. Where the lyrics have a time for every word, the words brighten as they're sung. The text brightens with the bass; in HDR it stays at the base brightness.
+
+**Where the lyrics come from.** The app reads the title, artist, album and length of what's playing from Windows' media controls (the same details the volume flyout shows), which Spotify, Tidal, browsers and most players fill in. It then looks the track up on [LRCLIB](https://lrclib.net), a free, crowd-sourced lyrics database. Only tracks that have time-synced lyrics there are shown, so some tracks have none, and the timings are only as good as whoever contributed them. The lyrics remain the copyright of their owners. They're fetched when a track plays, for display on your own screen, and nothing in this project redistributes them.
+
+**Privacy.** "Show lyrics" is off by default. While it's on, the title, artist, album and length of each track you play are sent to lrclib.net. Nothing is sent while it's off. Results, including "nothing found", are kept in `%APPDATA%\AudioVis\lyrics\` so each track is only asked about once; a track with no lyrics is asked about again after a week.
+
+**Staying in time.** Players report their position only now and then (at the start of a track and when you seek), so the app counts forward from the last report. If the lyrics run ahead of or behind what you hear, for example because of delay in your audio chain, move the sync offset.
+
+The built-in font covers Latin, Greek and Cyrillic letters; lyrics in other scripts show as empty boxes.
+
+### App
 | Setting | Default |
 |---|---|
 | Audio source | Default output device |
@@ -301,6 +323,7 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 | Descriptions on hover | on |
 | HDR output | off (a tick box at the top of the panel; a change applies when the app is restarted) |
 | FPS counter, FPS graph | off |
+| Show lyrics | off |
 
 ### HDR
 
@@ -326,6 +349,7 @@ The app connects to the first MIDI input whose name contains "nanoKONTROL2". On 
 - **S buttons 1 to 8:** flip x, flip y, mirror mode, stereo, auto-gain, bass boost, reverse palette, show or hide the panel
 - **R button 1:** switch between cross and circle
 - **Track arrows:** previous and next palette
+- **Marker buttons:** SET turns lyrics on or off; < and > move the lyrics sync offset 10 ms earlier or later
 
 **Controller picture.** F4, or the "Controller" button at the top of the panel, draws the nanoKONTROL2 across the bottom of the screen with every knob, fader and button labelled with what it does. White marks show where the hardware is and blue marks show where the setting is; lit buttons are switches that are on. Right-click any control on the picture to give it a different setting or job, or to unassign it.
 
@@ -335,7 +359,7 @@ Faders glide between steps, and frequency and time controls move logarithmically
 
 ## Presets and saved settings
 
-Settings are saved automatically to `%APPDATA%\AudioVis\settings.json`, including the audio source, the controller mapping and which panel sections are folded. Presets are saved to `%APPDATA%\AudioVis\presets\` and hold every slider and switch, but not the audio source or controller mapping. Neither is stored in this repository.
+Settings are saved automatically to `%APPDATA%\AudioVis\settings.json`, including the audio source, the controller mapping and which panel sections are folded. Presets are saved to `%APPDATA%\AudioVis\presets\` and hold every slider and switch, but not the audio source, the controller mapping, whether lyrics are shown or the lyrics sync offset. Neither is stored in this repository.
 
 ## Troubleshooting
 
@@ -358,9 +382,12 @@ visualiser/        Rust app (eframe/egui UI, wgpu rendering)
   src/audio.rs     audio capture (system output, named devices, inputs)
   src/analysis.rs  variable-Q spectrum, note sharpening and bass meter
   src/params.rs    every adjustable setting, its description, and the palettes
+  src/lyrics.rs    LRC lyrics parser, LRCLIB lookup and its cache
+  src/nowplaying.rs  Windows only: what other apps are playing, from the media controls
   src/midi.rs      MIDI controller input and learn
   src/render.rs    GPU pipelines (picture, 3D map, raindrops)
   src/shader.wgsl  cross and circle views, 3D, rain, colour mapping
+  examples/smtc_probe.rs  prints what the Windows media controls report, for checking a player
 installer/         Inno Setup script and build script for the Windows installer
 installer/macos/   build script and Info.plist for the macOS app and disk image
 android/           Gradle project, Java layer and build script for the Android APK

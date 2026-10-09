@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Lyrics (Windows).** The words of the song can be shown over the picture in time with the music: the line being sung in the middle, the line before fading out and the line to come below. The track is read from Windows' media controls and the lyrics come from LRCLIB. Off by default, because turning it on sends the title and artist of what you play to lrclib.net. Size, next-line preview and a per-app sync offset are adjustable, and the controller's marker buttons turn lyrics on and off and nudge the offset.
+
 ## 0.3.0 (2026-10-09)
 
 - **macOS (experimental).** The app builds for macOS 14.6 or later as a universal app in a disk image. It draws with Metal and captures system audio with a Core Audio tap. Windows behaviour is unchanged.

@@ -39,6 +39,8 @@ pub enum P {
     LookAhead,
     HdrBase,
     HdrPeak,
+    LyricsSize,
+    LyricsOffset,
 }
 
 pub struct Def {
@@ -68,7 +70,7 @@ const fn def(
     Def { id, key, name, unit, min, max, default, log, help }
 }
 
-pub const N_PARAMS: usize = 33;
+pub const N_PARAMS: usize = 35;
 pub const N_PALETTES: usize = 10;
 
 pub const DEFS: [Def; N_PARAMS] = [
@@ -105,6 +107,8 @@ pub const DEFS: [Def; N_PARAMS] = [
     def(P::LookAhead, "look_ahead", "3D flight look ahead", "", 0.0, 1.0, 0.0, false, "Where the camera points in flight. 0 always looks towards the centre; 1 looks the way it is flying, like travelling through a landscape."),
     def(P::HdrBase, "hdr_base", "HDR base brightness", "nits", 80.0, 500.0, 200.0, true, "HDR output only. How bright ordinary parts of the picture are. 200 is close to a typical desktop; lower suits a dark room."),
     def(P::HdrPeak, "hdr_peak", "HDR peak brightness", "nits", 200.0, 2000.0, 1000.0, true, "HDR output only. How bright the very loudest parts of the picture go. Set it at or below what the display can reach; higher values are simply clipped by the display."),
+    def(P::LyricsSize, "lyrics_size", "Lyrics size", "% of height", 2.0, 12.0, 5.0, false, "How tall the line being sung is, as a share of the picture's height. The line before and the line to come are drawn smaller."),
+    def(P::LyricsOffset, "lyrics_offset", "Lyrics sync offset", "ms", -1000.0, 1000.0, 0.0, false, "Moves the lyrics earlier (negative) or later (positive) against the music, in steps of 10 ms, for when they run ahead of or behind what you hear. Remembered separately for each music app, and not stored in presets."),
 ];
 
 pub fn def_of(id: P) -> &'static Def {
@@ -120,7 +124,12 @@ impl Def {
     pub fn from_norm(&self, norm: f32) -> f32 {
         let n = norm.clamp(0.0, 1.0);
         let v = if self.log { self.min * (self.max / self.min).powf(n) } else { self.min + n * (self.max - self.min) };
-        if self.id == P::Palette { v.round() } else { v }
+        match self.id {
+            P::Palette => v.round(),
+            // Whole steps of 10 ms.
+            P::LyricsOffset => (v / 10.0).round() * 10.0,
+            _ => v,
+        }
     }
 }
 
@@ -226,6 +235,8 @@ pub struct Params {
     pub bass_colour: Option<[f32; 3]>,
     /// Colour for out-of-step (surround) sound in stereo; `None` uses the palette's own.
     pub surround_colour: Option<[f32; 3]>,
+    /// Lyrics: show the line to come, small, under the one being sung.
+    pub lyrics_preview: bool,
 }
 
 impl Default for Params {
@@ -246,6 +257,7 @@ impl Default for Params {
             bass_style: BassStyle::Pulse,
             bass_colour: None,
             surround_colour: Some([1.0, 0.0, 0.0]),
+            lyrics_preview: true,
         }
     }
 }
@@ -319,6 +331,7 @@ impl Params {
             bass_style: self.bass_style,
             bass_colour: self.bass_colour,
             surround_colour: self.surround_colour,
+            lyrics_preview: self.lyrics_preview,
         }
     }
 
@@ -336,6 +349,7 @@ impl Params {
             bass_style: saved.bass_style,
             bass_colour: saved.bass_colour,
             surround_colour: saved.surround_colour,
+            lyrics_preview: saved.lyrics_preview,
             ..Self::default()
         };
         for d in &DEFS {
@@ -372,6 +386,8 @@ pub struct SavedParams {
     pub bass_colour: Option<[f32; 3]>,
     #[serde(default)]
     pub surround_colour: Option<[f32; 3]>,
+    #[serde(default = "yes")]
+    pub lyrics_preview: bool,
 }
 
 pub struct Palette {
