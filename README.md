@@ -19,6 +19,50 @@ Every pixel stands for a pair of frequencies, and its colour shows how loud thos
 - **MIDI control.** It's mapped out of the box to a Korg nanoKONTROL2, and any slider can be re-assigned with MIDI learn.
 - **Presets.** Save and load named snapshots of every slider and switch.
 
+## How it works
+
+AudioVis is written in Rust. Every frame it analyses the newest audio on the processor, hands the result to the graphics card as one small texture, and a shader draws the whole picture from it. The aim throughout is that what you see is what the music is actually doing: which notes are sounding, how loud, and when.
+
+### A spectrum laid out like pitch
+
+Most visualisers use a single FFT, which spaces its measurements evenly in hertz. Pitch doesn't work that way: each octave doubles the frequency. An evenly spaced spectrum therefore squeezes the bottom few octaves, where the bass line and most chords live, into a handful of points, and spends most of its detail on the top octave.
+
+AudioVis uses a variable-Q transform instead. It measures 36 bins per octave, three per semitone, over nine octaves from A0 (27.5 Hz) to about 14 kHz: 324 bins, each as wide musically as every other. Single notes, chords and their harmonics stay separate from the bottom of the range to the top.
+
+Each bin is measured over a stretch of audio suited to its own pitch, long for low notes and short for high ones. At full pitch detail a bin at A4 (440 Hz) looks at about 117 ms of sound; at the default setting, which favours speed, about 29 ms. The lowest notes would want well over a second, so they are capped (200 ms by default). Every one of these stretches ends at the newest sample, so a high note appears within a few milliseconds and nothing waits for the long bass measurements. "Speed vs pitch detail" and "Bass window" move this balance.
+
+### Bass that arrives on time
+
+Even capped, the bass bins of the spectrum are the slowest part of the picture, and a kick drum drawn 200 ms late looks wrong. So the bass effect doesn't use the spectrum at all. The waveform itself goes through a steep low-pass filter (fourth-order Butterworth) at the bass cutoff, and the loudness of what comes out is measured over the last 23 ms. The pulse from the centre follows that.
+
+### Thin lines from smeared notes
+
+A single note lights several neighbouring bins, and many more in the bass where the measurement has been shortened. The centre of that bump is still the note. Note sharpening finds each peak, fits a curve through it and its two neighbours to place the centre between bins, and redraws the bump as a line about one bin wide. Peaks that are only the skirt of a much louder neighbour are left out.
+
+### Stereo
+
+With Stereo on, left and right are analysed separately, keeping the timing of each bin as well as its size. Comparing the two gives, for every bin, where the sound sits between left and right, and how far the two channels are moving against each other, which is what makes sound wide and is what a surround upmix sends to the rear speakers. Both are averaged over about 150 ms and two semitones either side, so whole instruments lean together instead of flickering bin by bin.
+
+### From levels to light
+
+Auto-gain follows the loudest bin and falls back at a set speed when the music gets quieter, so quiet and loud tracks both fill the range of the palette. "Range" sets how far below that a sound can be and still show, "Decay" how long it lingers, and "Smoothing" how much neighbouring bins blur together. The palette then turns each level into a colour.
+
+### Drawing
+
+The graphics card receives one texture, 324 values wide: the level of every bin, with the stereo position and width when Stereo is on. A single full-screen shader works out every pixel from it, so the picture is as sharp at 4K as in a small window. The analysis takes well under a millisecond per frame on the PC it was developed on.
+
+In 3D, the picture is first drawn into a square map and its brightness becomes height. The shader then looks across that landscape from the camera, which can orbit or fly through it. The storm adds up to 24,000 raindrops that fall onto the surface, with run-off streaking down the slopes and pooling in the dark, low ground.
+
+<!-- source-only -->
+### Implementation notes
+
+- **Transform** (`src/analysis.rs`). Bins are grouped by the power-of-two FFT size that holds their window, and each group runs one FFT per frame ([rustfft](https://crates.io/crates/rustfft)). A bin's value is the product of that spectrum with a short precomputed kernel: the FFT of a Hann-windowed complex tone at the bin's frequency, right-aligned in the frame so its window ends at the newest sample. Only the few kernel points around the bin are kept.
+- **Bass meter** (`src/analysis.rs`). Two second-order low-pass stages (Q 0.541 and 1.307) make the fourth-order Butterworth; a running sum of squares over 23.2 ms gives the level.
+- **Sharpening** (`src/analysis.rs`). A peak is the highest bin within its own main lobe and within about 18 dB of the strongest bin nearby. Its position comes from a parabola through three points, and it is redrawn as a Gaussian with a sigma of 0.8 bins.
+- **Rendering** (`src/render.rs`, `src/shader.wgsl`). Shaders are written in WGSL and run through [wgpu](https://wgpu.rs), natively on Vulkan. The data texture also carries, for each bin, the loudest level within 2, 4, 8 ... 512 bins. The 3D view uses those rows to know how high the surface can be along a stretch of ground, so it can step across empty space without missing a thin wall.
+- **Interface.** The panel is [egui](https://www.egui.rs) through eframe; audio capture (WASAPI loopback) is [cpal](https://crates.io/crates/cpal); MIDI is [midir](https://crates.io/crates/midir).
+<!-- /source-only -->
+
 ## Requirements
 
 - Windows 10 or 11. Audio capture uses WASAPI loopback, so other systems aren't supported.
