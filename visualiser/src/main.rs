@@ -344,6 +344,8 @@ struct App {
     /// HDR output as chosen in the panel, and whether this run is drawing in HDR.
     hdr: bool,
     hdr_active: bool,
+    /// Show the HDR test pattern over the picture.
+    hdr_pattern: bool,
     /// Seconds of 3D flight flown so far, scaled by the flight speed.
     flight_time: f32,
     /// Recent frame times in ms, newest last, for the graph.
@@ -447,6 +449,7 @@ impl App {
             vsync_active,
             hdr: hdr || (options_hdr && hdr_active),
             hdr_active,
+            hdr_pattern: false,
             flight_time: 0.0,
             frame_history: std::collections::VecDeque::with_capacity(FPS_HISTORY),
             preset_name: String::new(),
@@ -824,7 +827,12 @@ impl App {
             cam_eye: [eye[0], eye[1], eye[2], 0.0],
             cam_target: [target[0], target[1], target[2], 0.0],
             sim: [self.frame_dt, (p.get(P::Storm) * render::MAX_DROPS as f32).floor(), 0.0, 0.0],
-            hdr: [self.hdr_active as u8 as f32, p.get(P::HdrBase) / 80.0, p.get(P::HdrPeak).max(p.get(P::HdrBase)) / 80.0, 0.0],
+            hdr: [
+                self.hdr_active as u8 as f32,
+                p.get(P::HdrBase) / 80.0,
+                p.get(P::HdrPeak).max(p.get(P::HdrBase)) / 80.0,
+                (self.hdr_active && self.hdr_pattern) as u8 as f32,
+            ],
             stops,
         }
     }
@@ -1183,6 +1191,8 @@ impl App {
             if self.hdr_active {
                 self.slider(ui, P::HdrBase);
                 self.slider(ui, P::HdrPeak);
+                let r = ui.checkbox(&mut self.hdr_pattern, "HDR test pattern");
+                self.describe(&r, "Show seven white patches across the picture. Five are at fixed brightness, from 80 to 1600 nits; patches at or above what the display can reach look the same as each other. The last two follow the base and peak brightness sliders.");
             }
             let r = ui.checkbox(&mut self.params.reverse_palette, "Reverse palette");
             self.describe(&r, "Swaps the palette end for end, so its loudest colour becomes its quietest. Silence stays black. On the controller: S button 7.");
@@ -1322,6 +1332,21 @@ impl eframe::App for App {
                 render::Frame { uniforms: self.uniforms(gain, glow, rect.width() / rect.height().max(1.0)), levels },
             ));
             self.draw_fps(ui.painter(), rect);
+            if self.hdr_active && self.hdr_pattern {
+                let labels = [
+                    "80".to_string(),
+                    "200".to_string(),
+                    "400".to_string(),
+                    "800".to_string(),
+                    "1600".to_string(),
+                    format!("base {:.0}", self.params.get(P::HdrBase)),
+                    format!("peak {:.0}", self.params.get(P::HdrPeak).max(self.params.get(P::HdrBase))),
+                ];
+                for (i, label) in labels.iter().enumerate() {
+                    let at = egui::pos2(rect.left() + (0.2 + 0.1 * i as f32) * rect.width(), rect.center().y - 0.09 * rect.height() - 6.0);
+                    ui.painter().text(at, egui::Align2::CENTER_BOTTOM, format!("{label} nits"), egui::FontId::proportional(14.0), egui::Color32::WHITE);
+                }
+            }
             if self.show_surface {
                 let hovered = surface::Surface {
                     params: &mut self.params,

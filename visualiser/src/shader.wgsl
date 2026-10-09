@@ -28,7 +28,7 @@ struct Uniforms {
     cam_target: vec4<f32>,
     // seconds since the last frame, number of raindrops in use, unused, unused
     sim: vec4<f32>,
-    // HDR output on (1) or off (0), base brightness and peak brightness in units of 80 nits, unused
+    // HDR output on (1) or off (0), base brightness and peak brightness in units of 80 nits, test pattern on (1)
     hdr: vec4<f32>,
     // black, then up to eight colours from quiet to loud
     stops: array<vec4<f32>, 9>,
@@ -491,8 +491,24 @@ fn to_display(colour: vec3<f32>) -> vec3<f32> {
     return linear * mix(u.hdr.y, u.hdr.z, pow(brightest, 3.0));
 }
 
+// HDR test pattern: a band of white patches across the middle of the
+// picture. Five are at fixed brightness (80, 200, 400, 800 and 1600 nits);
+// the last two follow the base and peak brightness settings.
+fn test_pattern(uv: vec2<f32>) -> vec4<f32> {
+    if (abs(uv.y - 0.5) > 0.09 || uv.x < 0.15 || uv.x > 0.85) { return vec4<f32>(0.0); }
+    let x = (uv.x - 0.15) / 0.1;
+    let tile = i32(floor(x));
+    if (abs(fract(x) - 0.5) > 0.42 || abs(uv.y - 0.5) > 0.075) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    var level = array<f32, 7>(1.0, 2.5, 5.0, 10.0, 20.0, u.hdr.y, u.hdr.z)[tile];
+    return vec4<f32>(vec3<f32>(level), 1.0);
+}
+
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4<f32> {
+    if (u.hdr.w > 0.5) {
+        let tile = test_pattern(in.uv);
+        if (tile.a > 0.5) { return tile; }
+    }
     if (u.relief.x > 0.5) { return vec4<f32>(to_display(relief_view(in.uv)), 1.0); }
     return vec4<f32>(to_display(shade(in.uv, field(in.uv))), 1.0);
 }
