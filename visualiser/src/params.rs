@@ -41,6 +41,7 @@ pub enum P {
     HdrPeak,
     LyricsSize,
     LyricsOffset,
+    LyricsStrength,
 }
 
 pub struct Def {
@@ -70,7 +71,7 @@ const fn def(
     Def { id, key, name, unit, min, max, default, log, help }
 }
 
-pub const N_PARAMS: usize = 35;
+pub const N_PARAMS: usize = 36;
 pub const N_PALETTES: usize = 10;
 
 pub const DEFS: [Def; N_PARAMS] = [
@@ -109,6 +110,7 @@ pub const DEFS: [Def; N_PARAMS] = [
     def(P::HdrPeak, "hdr_peak", "HDR peak brightness", "nits", 200.0, 2000.0, 1000.0, true, "HDR output only. How bright the very loudest parts of the picture go. Set it at or below what the display can reach; higher values are simply clipped by the display."),
     def(P::LyricsSize, "lyrics_size", "Lyrics size", "% of height", 2.0, 12.0, 5.0, false, "How tall the line being sung is, as a share of the picture's height. The line before and the line to come are drawn smaller."),
     def(P::LyricsOffset, "lyrics_offset", "Lyrics sync offset", "ms", -1000.0, 1000.0, 0.0, false, "Moves the lyrics earlier (negative) or later (positive) against the music, in steps of 10 ms, for when they run ahead of or behind what you hear. Remembered separately for each music app, and not stored in presets."),
+    def(P::LyricsStrength, "lyrics_strength", "Lyrics strength", "", 0.0, 1.0, 0.4, false, "How much the lyrics stand out from the picture. Low leaves the line faint, with only the word being sung coming forward; high makes every word solid, with a dark edge. The word being sung is always clear."),
 ];
 
 pub fn def_of(id: P) -> &'static Def {
@@ -155,6 +157,30 @@ impl Mirror {
 
     pub fn next(self) -> Self {
         Self::ALL[(self as usize + 1) % Self::ALL.len()]
+    }
+}
+
+/// Where the lyrics are drawn.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub enum LyricsPlace {
+    Top,
+    #[default]
+    Centre,
+    Bottom,
+    /// Round a circle about the middle of the picture, scrolling.
+    Circle,
+}
+
+impl LyricsPlace {
+    pub const ALL: [LyricsPlace; 4] = [LyricsPlace::Top, LyricsPlace::Centre, LyricsPlace::Bottom, LyricsPlace::Circle];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LyricsPlace::Top => "Top",
+            LyricsPlace::Centre => "Middle",
+            LyricsPlace::Bottom => "Bottom",
+            LyricsPlace::Circle => "Circle",
+        }
     }
 }
 
@@ -237,6 +263,7 @@ pub struct Params {
     pub surround_colour: Option<[f32; 3]>,
     /// Lyrics: show the line to come, small, under the one being sung.
     pub lyrics_preview: bool,
+    pub lyrics_place: LyricsPlace,
 }
 
 impl Default for Params {
@@ -258,6 +285,7 @@ impl Default for Params {
             bass_colour: None,
             surround_colour: Some([1.0, 0.0, 0.0]),
             lyrics_preview: true,
+            lyrics_place: LyricsPlace::Centre,
         }
     }
 }
@@ -332,6 +360,7 @@ impl Params {
             bass_colour: self.bass_colour,
             surround_colour: self.surround_colour,
             lyrics_preview: self.lyrics_preview,
+            lyrics_place: self.lyrics_place,
         }
     }
 
@@ -350,6 +379,7 @@ impl Params {
             bass_colour: saved.bass_colour,
             surround_colour: saved.surround_colour,
             lyrics_preview: saved.lyrics_preview,
+            lyrics_place: saved.lyrics_place,
             ..Self::default()
         };
         for d in &DEFS {
@@ -388,6 +418,8 @@ pub struct SavedParams {
     pub surround_colour: Option<[f32; 3]>,
     #[serde(default = "yes")]
     pub lyrics_preview: bool,
+    #[serde(default)]
+    pub lyrics_place: LyricsPlace,
 }
 
 pub struct Palette {

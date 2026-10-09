@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Lyrics (Windows).** The words of the song can be shown over the picture in time with the music: the line being sung in the middle, the line before fading out and the line to come below. The track is read from Windows' media controls and the lyrics come from LRCLIB. Off by default, because turning it on sends the title and artist of what you play to lrclib.net. Size, next-line preview and a per-app sync offset are adjustable, and the controller's marker buttons turn lyrics on and off and nudge the offset.
+- **Lyrics (Windows).** The words of the song can be shown over the picture in time with the music: the line being sung in the middle, the line before fading out and the line to come below. The track is read from Windows' media controls and the lyrics come from LRCLIB. Off by default, because turning it on sends the title and artist of what you play to lrclib.net. The words take the palette's colours and stay faint while the word being sung swells and glows. They can sit at the top, middle or bottom, or run round a circle that follows the 3D view. Size, strength, next-line preview and a per-app sync offset are adjustable, and the controller's marker buttons turn lyrics on and off and nudge the offset.
 
 ## 0.3.0 (2026-10-09)
 

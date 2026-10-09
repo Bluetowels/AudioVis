@@ -300,13 +300,17 @@ Windows only.
 | Setting | Default | Range | What it does |
 |---|---|---|---|
 | Show lyrics | off | | Shows the words of the song over the picture, in time with the music |
+| Place | Middle | Top, Middle, Bottom, Circle | Lines across the picture at that height, or round a circle about its middle |
 | Lyrics size | 5% of the picture's height | 2 to 12 | Height of the line being sung |
+| Lyrics strength | 0.4 | 0 to 1 | How much the words that aren't being sung show; low leaves them faint so the picture comes first |
 | Show the next line | on | | The line to come, small and dim, under the one being sung |
 | Lyrics sync offset | 0 ms | -1000 to 1000, in steps of 10 | Moves the lyrics earlier (negative) or later (positive); kept separately for each music app |
 
-The line being sung sits in the middle of the picture. The line before fades out above it and the line to come waits below. Each line appears about 150 ms before it's sung. Where the lyrics have a time for every word, the words brighten as they're sung. The text brightens with the bass; in HDR it stays at the base brightness.
+With Top, Middle or Bottom, the line being sung runs across the picture at that height. The line before fades out above it and the line to come waits below. Each line appears about 150 ms before it's sung.
 
-In the circle view the lyrics instead run round the top of the circle and scroll: each letter passes twelve o'clock as it's sung and brightens there, earlier lines move away to the left and the lines to come arrive from the right. "Show the next line" has no effect there. In 3D the words lie on the picture, on the far side of the circle from the camera, so they tilt, turn and fly with it; steep tilts make them small, and Lyrics size makes up for it.
+With Circle, the lyrics run round a circle about the middle of the picture and scroll, so each word passes the top as it's sung; earlier lines move away to the left and the lines to come arrive from the right. In 3D the words lie on the picture, on the far side of the circle from the camera, so they tilt, turn and fly with it; steep tilts make them small, and Lyrics size makes up for it. "Show the next line" has no effect there.
+
+The words take their colours from the palette and are drawn faint, so they sit in the picture instead of over it. The word being sung comes forward: it swells, lifts, turns bright and glows, with the glow following the bass, then settles back as the next word starts. Where the lyrics have a time for every word, those are used. Most lyrics only time whole lines; then the line's time is shared out between its words by their length, which is close but not exact. In HDR the words stay at the base brightness.
 
 **Where the lyrics come from.** The app reads the title, artist, album and length of what's playing from Windows' media controls (the same details the volume flyout shows), which Spotify, Tidal, browsers and most players fill in. It then looks the track up on [LRCLIB](https://lrclib.net), a free, crowd-sourced lyrics database. Only tracks that have time-synced lyrics there are shown, so some tracks have none, and the timings are only as good as whoever contributed them. The lyrics remain the copyright of their owners. They're fetched when a track plays, for display on your own screen, and nothing in this project redistributes them.
 
