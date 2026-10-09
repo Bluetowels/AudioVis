@@ -37,6 +37,8 @@ pub enum P {
     Storm,
     FlightDepth,
     LookAhead,
+    HdrBase,
+    HdrPeak,
 }
 
 pub struct Def {
@@ -66,7 +68,7 @@ const fn def(
     Def { id, key, name, unit, min, max, default, log, help }
 }
 
-pub const N_PARAMS: usize = 31;
+pub const N_PARAMS: usize = 33;
 pub const N_PALETTES: usize = 10;
 
 pub const DEFS: [Def; N_PARAMS] = [
@@ -101,6 +103,8 @@ pub const DEFS: [Def; N_PARAMS] = [
     def(P::Storm, "storm", "3D storm", "", 0.0, 1.0, 0.0, false, "Experimental. Raindrops fall on the 3D view, splash where they land and evaporate; the surface shows water running down slopes and pooling in the lowest areas. Higher values bring more rain. 0 is off."),
     def(P::FlightDepth, "flight_depth", "3D flight depth", "", 0.0, 1.0, 0.0, false, "How far the flight goes into the picture. 0 circles above and around it. Towards 1 the camera drops down among the walls and peaks and passes low across the middle, riding just above the surface as it moves with the music."),
     def(P::LookAhead, "look_ahead", "3D flight look ahead", "", 0.0, 1.0, 0.0, false, "Where the camera points in flight. 0 always looks towards the centre; 1 looks the way it is flying, like travelling through a landscape."),
+    def(P::HdrBase, "hdr_base", "HDR base brightness", "nits", 80.0, 500.0, 200.0, true, "HDR output only. How bright ordinary parts of the picture are. 200 is close to a typical desktop; lower suits a dark room."),
+    def(P::HdrPeak, "hdr_peak", "HDR peak brightness", "nits", 200.0, 2000.0, 1000.0, true, "HDR output only. How bright the very loudest parts of the picture go. Set it at or below what the display can reach; higher values are simply clipped by the display."),
 ];
 
 pub fn def_of(id: P) -> &'static Def {

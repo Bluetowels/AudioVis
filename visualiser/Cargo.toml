@@ -28,3 +28,9 @@ eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "de
 android-activity = { version = "0.6.1", features = ["native-activity"] }
 eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "android-native-activity"] }
 jni = "0.21.1"
+
+# A copy of egui-wgpu with two small changes for HDR output: it can pick a
+# 16-bit float surface, and draws the interface at a set brightness on one.
+# Search the copy for "AudioVis" to find them.
+[patch.crates-io]
+egui-wgpu = { path = "vendor/egui-wgpu" }

@@ -50,6 +50,9 @@ struct Settings {
     vsync: bool,
     #[serde(default)]
     show_surface: bool,
+    /// Ask for HDR output on the next start.
+    #[serde(default)]
+    hdr: bool,
 }
 
 #[cfg(windows)]
@@ -135,6 +138,8 @@ struct Options {
     circle: bool,
     /// Self-test: show the FPS counter and graph.
     fps: bool,
+    /// Ask for HDR output on this run.
+    hdr: bool,
     /// Start with the picture of the controller showing.
     surface: bool,
     stereo: bool,
@@ -158,6 +163,7 @@ impl Default for Options {
             show_panel: true,
             circle: false,
             fps: false,
+            hdr: false,
             surface: false,
             stereo: false,
             underlay: false,
@@ -192,6 +198,7 @@ fn parse_options() -> Options {
             "--no-vsync" => o.vsync = false,
             "--circle" => o.circle = true,
             "--fps" => o.fps = true,
+            "--hdr" => o.hdr = true,
             "--controller" => o.surface = true,
             "--stereo" => o.stereo = true,
             "--underlay" => o.underlay = true,
@@ -281,6 +288,23 @@ fn start(options: Options, mut native: eframe::NativeOptions) -> eframe::Result 
         .and_then(|v| v.get("vsync").and_then(|v| v.as_bool()))
         .unwrap_or(true);
     let vsync_active = options.vsync && (saved_vsync || options.selftest.is_some());
+
+    // HDR is also fixed when the window is created. The copy of egui-wgpu in
+    // vendor/ reads this when it chooses the surface.
+    let saved: Option<serde_json::Value> = std::fs::read_to_string(config_dir().join("settings.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok());
+    let saved_hdr = saved.as_ref().and_then(|v| v.get("hdr")).and_then(|v| v.as_bool()).unwrap_or(false);
+    if options.hdr || (saved_hdr && options.selftest.is_none()) {
+        let base = saved
+            .as_ref()
+            .and_then(|v| v.pointer("/params/values/hdr_base"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(200.0);
+        eframe::egui_wgpu::HDR_UI_SCALE.store(((base / 80.0) as f32).to_bits(), std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: nothing else is running yet.
+        unsafe { std::env::set_var("AUDIOVIS_HDR", "1") };
+    }
     native.wgpu_options.surface.present_mode = if vsync_active {
         // Plain Fifo, not AutoVsync: that prefers a mode which shows a late
         // frame immediately, tearing the picture whenever a frame runs over.
@@ -296,7 +320,7 @@ fn start(options: Options, mut native: eframe::NativeOptions) -> eframe::Result 
             if cc.wgpu_render_state.is_none() {
                 return Err("the wgpu renderer is not available".into());
             }
-            Ok(Box::new(App::new(cc, options, saved_vsync, vsync_active)))
+            Ok(Box::new(App::new(cc, options, saved_vsync, vsync_active, saved_hdr)))
         }),
     );
     if let Err(e) = &result {
@@ -432,6 +456,11 @@ struct App {
     /// Vsync as chosen in the panel, and as this run was started with.
     vsync: bool,
     vsync_active: bool,
+    /// HDR output as chosen in the panel, and whether this run is drawing in HDR.
+    hdr: bool,
+    hdr_active: bool,
+    /// Show the HDR test pattern over the picture.
+    hdr_pattern: bool,
     /// Seconds of 3D flight flown so far, scaled by the flight speed.
     flight_time: f32,
     /// Recent frame times in ms, newest last, for the graph.
@@ -455,7 +484,9 @@ struct App {
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, options: Options, vsync: bool, vsync_active: bool) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, options: Options, vsync: bool, vsync_active: bool, hdr: bool) -> Self {
+        let options_hdr = options.hdr;
+        let hdr_active = cc.wgpu_render_state.as_ref().is_some_and(|r| r.target_format == eframe::egui_wgpu::wgpu::TextureFormat::Rgba16Float);
         let render_state = cc.wgpu_render_state.as_ref().expect("the wgpu renderer is required");
         render::init(render_state);
         let info = render_state.adapter.get_info();
@@ -537,6 +568,9 @@ impl App {
             show_surface,
             vsync,
             vsync_active,
+            hdr: hdr || (options_hdr && hdr_active),
+            hdr_active,
+            hdr_pattern: false,
             flight_time: 0.0,
             frame_history: std::collections::VecDeque::with_capacity(FPS_HISTORY),
             preset_name: String::new(),
@@ -571,6 +605,7 @@ impl App {
             collapsed: self.collapsed.clone(),
             vsync: self.vsync,
             show_surface: self.show_surface,
+            hdr: self.hdr,
         };
         serde_json::to_string_pretty(&settings).ok()
     }
@@ -980,6 +1015,12 @@ impl App {
             cam_eye: [eye[0], eye[1], eye[2], 0.0],
             cam_target: [target[0], target[1], target[2], 0.0],
             sim: [self.frame_dt, (p.get(P::Storm) * render::MAX_DROPS as f32).floor(), 0.0, 0.0],
+            hdr: [
+                self.hdr_active as u8 as f32,
+                p.get(P::HdrBase) / 80.0,
+                p.get(P::HdrPeak).max(p.get(P::HdrBase)) / 80.0,
+                (self.hdr_active && self.hdr_pattern) as u8 as f32,
+            ],
             stops,
         }
     }
@@ -1169,6 +1210,17 @@ impl App {
                 let r = ui.toggle_value(&mut self.show_fps_graph, "FPS graph");
                 self.describe(&r, "Show a graph of the frame rate over the last two seconds in the top-left corner of the picture, so dips and stutters are visible. Also on F3.");
             });
+            #[cfg(not(target_os = "android"))]
+            {
+            let label = match (self.hdr, self.hdr_active) {
+                (true, true) => "HDR output (on)",
+                (false, false) => "HDR output",
+                (true, false) => "HDR output (applies when the app is restarted, if the display offers it)",
+                (false, true) => "HDR output (turns off when the app is restarted)",
+            };
+            let r = ui.checkbox(&mut self.hdr, label);
+            self.describe(&r, "Draw in high dynamic range, so the loudest parts of the picture are brighter than ordinary white. Needs an HDR display with HDR switched on in Windows. A change takes effect the next time the app starts. The two HDR brightness sliders are in the Colour section.");
+            }
             let label = if self.vsync != self.vsync_active { "Vsync (applies when the app is restarted)" } else { "Vsync" };
             let r = ui.checkbox(&mut self.vsync, label);
             self.describe(&r, "On: each frame waits for the display, so the picture never tears and the frame rate matches the screen. Off: frames are drawn as fast as possible, which can tear. A change takes effect the next time the app starts.");
@@ -1335,6 +1387,12 @@ impl App {
             if self.section(ui, "Colour") {
             self.slider(ui, P::Palette);
             self.slider(ui, P::Banding);
+            if self.hdr_active {
+                self.slider(ui, P::HdrBase);
+                self.slider(ui, P::HdrPeak);
+                let r = ui.checkbox(&mut self.hdr_pattern, "HDR test pattern");
+                self.describe(&r, "Show seven white patches across the picture. Five are at fixed brightness, from 80 to 1600 nits; patches at or above what the display can reach look the same as each other. The last two follow the base and peak brightness sliders.");
+            }
             let r = ui.checkbox(&mut self.params.reverse_palette, "Reverse palette");
             self.describe(&r, "Swaps the palette end for end, so its loudest colour becomes its quietest. Silence stays black. On the controller: S button 7.");
             }
@@ -1448,6 +1506,8 @@ impl eframe::App for App {
         self.controller.reconnect(&self.options.midi_port);
         self.controller.apply(&mut self.params, &mut self.bindings, &mut self.learning, &mut self.show_panel, &mut self.show_surface);
         self.params.glide(dt);
+        // The panel is drawn at the picture's base brightness.
+        eframe::egui_wgpu::HDR_UI_SCALE.store((self.params.get(P::HdrBase) / 80.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
         self.frame_dt = dt.min(0.05);
         self.flight_time += dt * self.params.get(P::Flight);
         let orbit = self.params.get(P::Orbit);
@@ -1477,6 +1537,21 @@ impl eframe::App for App {
                 render::Frame { uniforms: self.uniforms(gain, glow, rect.width() / rect.height().max(1.0)), levels },
             ));
             self.draw_fps(ui.painter(), rect);
+            if self.hdr_active && self.hdr_pattern {
+                let labels = [
+                    "80".to_string(),
+                    "200".to_string(),
+                    "400".to_string(),
+                    "800".to_string(),
+                    "1600".to_string(),
+                    format!("base {:.0}", self.params.get(P::HdrBase)),
+                    format!("peak {:.0}", self.params.get(P::HdrPeak).max(self.params.get(P::HdrBase))),
+                ];
+                for (i, label) in labels.iter().enumerate() {
+                    let at = egui::pos2(rect.left() + (0.2 + 0.1 * i as f32) * rect.width(), rect.center().y - 0.09 * rect.height() - 6.0);
+                    ui.painter().text(at, egui::Align2::CENTER_BOTTOM, format!("{label} nits"), egui::FontId::proportional(14.0), egui::Color32::WHITE);
+                }
+            }
             if self.show_surface {
                 let hovered = surface::Surface {
                     params: &mut self.params,

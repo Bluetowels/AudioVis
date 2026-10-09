@@ -4,6 +4,7 @@
 
 - **macOS (experimental).** The app builds for macOS 14.6 or later as a universal app in a disk image. It draws with Metal and captures system audio with a Core Audio tap. Windows behaviour is unchanged.
 - **Android (experimental).** The app builds as an APK for Android 10 or later. It draws with Vulkan, takes its sound from other apps (where they allow it), the microphone or an audio file, is worked by touch, and picks up a USB MIDI controller. Windows behaviour is unchanged.
+- **HDR output on Windows.** On an HDR display the picture can use brightness above ordinary white, with base and peak brightness sliders and a test pattern. Off by default; tick "HDR output" or start with `--hdr`.
 
 ## 0.2.0 (2026-10-09)
 

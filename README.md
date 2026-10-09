@@ -15,6 +15,7 @@ Every pixel stands for a pair of frequencies, and its colour shows how loud thos
 - **Note controls.** Low notes can be sharpened to thin lines so a bass line is easy to follow, and the balance between speed and pitch detail is adjustable.
 - **Stereo (optional).** Each sound can lean towards the side it's panned to. Wide, out-of-phase sound can be drawn in its own "surround" colour.
 - **Experimental 3D.** Tilt the camera so loudness stands up as height, with orbit, a camera that flies around or into the picture, and a storm of raindrops.
+- **HDR (Windows).** On an HDR display the loudest parts of the picture can be brighter than ordinary white, with adjustable base and peak brightness.
 - **Palettes.** Ten built-in palettes: Ember, Ice, Aurora, Neon, Sunset, Mono, Rainbow, Zigzag, Candy and Contour. Any of them can be reversed or banded.
 - **MIDI control.** It's mapped out of the box to a Korg nanoKONTROL2, and any slider can be re-assigned with MIDI learn.
 - **Presets.** Save and load named snapshots of every slider and switch.
@@ -191,6 +192,7 @@ Rest the pointer on any setting to see a description of what it does; the "Descr
 | `--underlay` | Start with the bass drawn as a fill of the dark areas |
 | `--controller` | Start with the picture of the controller showing |
 | `--fps` | Start with the FPS counter and graph showing (first run or self-test only) |
+| `--hdr` | Ask for HDR output on this run |
 | `--no-vsync` | Uncap the frame rate for this run |
 | `--midi-port NAME` | Use a specific MIDI input port |
 | `--set key=value` | Set any slider by its key, e.g. `--set bass_amount=2` |
@@ -285,6 +287,9 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 | Palette | Ember | ten palettes | Colours from quiet to loud |
 | Colour banding | 0 | 0 to 1 | 0 blends smoothly; 1 gives hard-edged bands |
 | Reverse palette | off | | Swaps the palette end for end |
+| HDR base brightness | 200 nits | 80 to 500 | HDR only: how bright ordinary parts of the picture and the panel are |
+| HDR peak brightness | 1000 nits | 200 to 2000 | HDR only: how bright the very loudest parts go |
+| HDR test pattern | off | | HDR only: white patches at 80, 200, 400, 800 and 1600 nits, plus the base and peak |
 
 ### App
 
@@ -294,7 +299,14 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 | Window | 1280 x 720, panel shown |
 | Vsync | on (a tick box at the top of the panel; a change applies when the app is restarted) |
 | Descriptions on hover | on |
+| HDR output | off (a tick box at the top of the panel; a change applies when the app is restarted) |
 | FPS counter, FPS graph | off |
+
+### HDR
+
+HDR output needs an HDR display with HDR switched on in Windows. Tick "HDR output" at the top of the panel and restart the app, or start it with `--hdr`. Ordinary colours are then shown at the base brightness and the brightest colours of the palette climb towards the peak; the panel stays at the base brightness. If the display doesn't offer an HDR surface, the app carries on in standard range.
+
+To get an HDR surface the project carries a copy of one of its UI components, `visualiser/vendor/egui-wgpu`, with a few small changes marked "AudioVis".
 
 ## MIDI (Korg nanoKONTROL2)
 
