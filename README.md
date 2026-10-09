@@ -215,7 +215,7 @@ Defaults are what a first run or "Reset everything to defaults" gives.
 | Reference level | -12 dBFS | -60 to 12 | Level shown at full brightness when auto-gain is off |
 | Auto-gain speed | 4 dB/s | 0.5 to 40 | How quickly the picture turns back up after a loud passage |
 | Range | 40 dB | 20 to 90 | How far below full brightness still shows |
-| Slope | 0 dB/oct | 0 to 9 | Treble lift; 0 follows the real energy, which is mostly bass, and 4.5 makes a typical mix look level |
+| Slope | 0 dB/oct | -3 to 3 | Tilts the balance about the middle of the spectrum: positive brings out treble, negative brings out bass |
 | Contrast curve | 1.2 | 0.4 to 3 | How colour climbs from quiet to loud |
 | Master brightness | 1.0 | 0 to 2 | Overall brightness |
 

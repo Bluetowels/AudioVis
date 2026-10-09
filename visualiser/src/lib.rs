@@ -21,6 +21,10 @@ use std::time::Instant;
 
 /// Bins quieter than this are treated as silent whatever the gain.
 const GATE_DB: f32 = -90.0;
+/// Bins this far below the loudest bin are also treated as silent. Without
+/// this, a steep slope lifts the faint hiss at the top of the spectrum above
+/// the music, auto-gain follows the hiss, and the picture goes dark.
+const RELATIVE_GATE_DB: f32 = 70.0;
 /// Auto-gain never turns up further than this reference level.
 const AUTO_GAIN_FLOOR_DB: f32 = -55.0;
 /// Stereo position is averaged over this long and this many bins either side
@@ -776,11 +780,18 @@ impl App {
         let range = p.get(P::Range);
         let fall = p.get(P::AutoGainSpeed) * dt;
 
-        // Reference level: the loudest tilted bin, falling back slowly, or the manual setting.
+        // The slope tilts about the middle of the spectrum, so it lifts treble
+        // and lowers bass by the same amount instead of only adding level.
+        let tilt = |b: usize| slope * (b as f32 - 0.5 * N_BINS as f32);
+        let loudest = self.db.iter().flatten().copied().fold(f32::MIN, f32::max);
+        let gate = GATE_DB.max(loudest - RELATIVE_GATE_DB);
+
+        // Reference level: the loudest tilted bin that is really sounding,
+        // falling back slowly, or the manual setting.
         let peak = self
             .db
             .iter()
-            .flat_map(|row| row.iter().enumerate().map(|(b, db)| db + slope * b as f32))
+            .flat_map(|row| row.iter().enumerate().filter(|(_, db)| **db > gate).map(|(b, db)| db + tilt(b)))
             .fold(f32::MIN, f32::max);
         self.reference_db = if p.auto_gain {
             peak.max(self.reference_db - fall).max(AUTO_GAIN_FLOOR_DB)
@@ -793,9 +804,9 @@ impl App {
         let sigma = p.get(P::Smoothing);
         for (row, shown) in self.db.iter().zip(self.shown.iter_mut()) {
             for (b, db) in row.iter().enumerate() {
-                let tilted = db + slope * b as f32;
+                let tilted = db + tilt(b);
                 let level = ((tilted - (self.reference_db - range)) / range).clamp(0.0, 1.0);
-                self.scratch[b] = if *db > GATE_DB { level } else { 0.0 };
+                self.scratch[b] = if *db > gate { level } else { 0.0 };
             }
             analysis::sharpen(
                 &mut self.scratch,
