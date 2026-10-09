@@ -1201,7 +1201,9 @@ impl App {
 
         let middle = picture.center().y;
         let age = current.map_or(f64::MAX, |line| t - line.start);
-        let arrive = smooth(age / LEAD_S);
+        // The new line comes in over the second half of its lead, once the
+        // line before has moved out of its way.
+        let arrive = smooth(age / (0.5 * LEAD_S) - 1.0);
         let mut height = size * 1.2;
         if let Some(line) = current.filter(|line| !line.text.is_empty()) {
             // A line left standing through a long gap dims, so it is not taken for the one being sung.
@@ -1217,7 +1219,7 @@ impl App {
         let gap = 0.35 * size;
         if let Some(line) = previous.filter(|line| !line.text.is_empty() && age < LEAVE_S) {
             // It moves up out of the way of the new line as it fades.
-            let rise = smooth(age / (0.5 * LEAVE_S));
+            let rise = smooth(age / (0.6 * LEAD_S));
             let bottom = middle + 0.6 * size + (-height / 2.0 - gap - 0.6 * size) * rise;
             text(&[(line.text.as_str(), 1.0)], size, bottom, 1.0, 1.0 - smooth(age / LEAVE_S));
         }
