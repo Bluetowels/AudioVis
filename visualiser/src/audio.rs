@@ -319,7 +319,7 @@ impl Capture {
 }
 
 impl Tap {
-    fn new(name: String, format: String, channels: usize, ring: Arc<Mutex<Ring>>, stream: Option<cpal::Stream>) -> Self {
+    fn new(name: String, format: String, channels: usize, ring: Arc<Mutex<Ring>>, stream: Option<Stream>) -> Self {
         Self { name, format, channels, ring, _stream: stream, last_total: 0, last_data: Instant::now() }
     }
 
