@@ -72,7 +72,7 @@ pub const N_PARAMS: usize = 33;
 pub const N_PALETTES: usize = 10;
 
 pub const DEFS: [Def; N_PARAMS] = [
-    def(P::Slope, "slope", "Slope", "dB/oct", 0.0, 9.0, 0.0, false, "Lifts treble relative to bass before display. At 0 the picture follows where the energy really is, which is mostly bass. 4.5 matches SPAN and makes a typical mix look level."),
+    def(P::Slope, "slope", "Slope", "dB/oct", -3.0, 3.0, 0.0, false, "Tilts the balance between bass and treble about the middle of the spectrum. 0 suits most music, because the analysis already treats each note equally. Positive brings out treble and negative brings out bass. The range is kept modest: a steeper tilt pushes most of the spectrum out of the brightness range and the picture goes dark."),
     def(P::Range, "range", "Range", "dB", 20.0, 90.0, 40.0, false, "How far below full brightness a sound can be and still show. Smaller gives more contrast and more black; larger shows quiet detail."),
     def(P::Reference, "reference", "Reference level", "dBFS", -60.0, 12.0, -12.0, false, "The level shown at full brightness. Only used when auto-gain is off."),
     def(P::AutoGainSpeed, "auto_gain_speed", "Auto-gain speed", "dB/s", 0.5, 40.0, 4.0, true, "How quickly auto-gain turns the picture back up after the music gets quieter. Slow keeps loud and quiet passages looking different; fast evens everything out."),

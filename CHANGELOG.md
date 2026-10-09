@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Slope no longer blacks out the picture.** It now tilts about the middle of the spectrum over a range of -3 to 3 dB per octave, and faint hiss can no longer take over auto-gain.
 - **HDR output on Windows.** On an HDR display the picture can use brightness above ordinary white, with base and peak brightness sliders and a test pattern. Off by default; tick "HDR output" or start with `--hdr`.
 
 ## 0.2.0 (2026-10-09)
