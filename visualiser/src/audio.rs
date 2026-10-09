@@ -2,7 +2,10 @@
 //! playing (WASAPI loopback on Windows, a Core Audio tap on macOS 14.6 or
 //! later), an input device, or a built-in test signal.
 //! Only the front left and right channels of a device are used.
+//! On Android the sound is gathered by the Java side of the app instead:
+//! what other apps are playing, the microphone, or an audio file.
 
+#[cfg(not(target_os = "android"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -50,7 +53,7 @@ impl Ring {
     }
 
     /// One frame as delivered by the device, with any number of channels.
-    fn push_frame(&mut self, frame: &[f32]) {
+    pub fn push_frame(&mut self, frame: &[f32]) {
         for (peak, s) in self.peaks.iter_mut().zip(frame) {
             *peak = peak.max(s.abs());
         }
@@ -80,9 +83,24 @@ pub enum Source {
     Outputs(Vec<String>),
     Input(String),
     TestSignal,
+    /// An audio file the user picked, played by the app itself.
+    #[cfg(target_os = "android")]
+    File,
 }
 
 impl Source {
+    #[cfg(target_os = "android")]
+    pub fn label(&self) -> String {
+        match self {
+            Source::SystemOutput => "Other apps' sound".into(),
+            Source::Outputs(_) => "Chosen output devices".into(),
+            Source::Input(_) => "Microphone".into(),
+            Source::File => "Audio file".into(),
+            Source::TestSignal => "Test signal".into(),
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub fn label(&self) -> String {
         match self {
             Source::SystemOutput => "Default output device".into(),
@@ -94,12 +112,18 @@ impl Source {
     }
 }
 
+/// Whatever keeps a device's sound arriving for as long as it is held.
+#[cfg(not(target_os = "android"))]
+type Stream = cpal::Stream;
+#[cfg(target_os = "android")]
+type Stream = crate::android::Stream;
+
 struct Tap {
     name: String,
     format: String,
     channels: usize,
     ring: Arc<Mutex<Ring>>,
-    _stream: Option<cpal::Stream>,
+    _stream: Option<Stream>,
     last_total: u64,
     last_data: Instant,
 }
@@ -120,10 +144,23 @@ pub struct Capture {
     consumed: u64,
 }
 
+#[cfg(not(target_os = "android"))]
 fn device_name(device: &cpal::Device) -> String {
     device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "unknown".into())
 }
 
+/// Android has no list of devices to choose from: it routes sound itself.
+#[cfg(target_os = "android")]
+pub fn input_device_names() -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(target_os = "android")]
+pub fn output_device_names() -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn input_device_names() -> Vec<String> {
     let mut names: Vec<String> =
         cpal::default_host().input_devices().map(|d| d.map(|d| device_name(&d)).collect()).unwrap_or_default();
@@ -131,6 +168,7 @@ pub fn input_device_names() -> Vec<String> {
     names
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn output_device_names() -> Vec<String> {
     let mut names: Vec<String> =
         cpal::default_host().output_devices().map(|d| d.map(|d| device_name(&d)).collect()).unwrap_or_default();
@@ -139,6 +177,32 @@ pub fn output_device_names() -> Vec<String> {
 }
 
 impl Capture {
+    /// On Android the Java side of the app gathers the sound and hands it
+    /// over a block at a time (see `android.rs`), always as one device.
+    #[cfg(target_os = "android")]
+    pub fn open(source: Source) -> Self {
+        use crate::android::Feed;
+        let ring = Arc::new(Mutex::new(Ring::new(48_000)));
+        let mut errors = Vec::new();
+        let (name, format, feed) = match &source {
+            Source::TestSignal => {
+                spawn_test_signal(Arc::downgrade(&ring));
+                ("Test signal", "generated, 48 kHz", Feed::None)
+            }
+            Source::SystemOutput => ("Other apps", "waiting for permission", Feed::Playback),
+            Source::Input(_) => ("Microphone", "waiting for permission", Feed::Microphone),
+            Source::File => ("Audio file", "no file chosen yet", Feed::File),
+            Source::Outputs(_) => {
+                errors.push("Android has no separate output devices to choose from".to_string());
+                ("No source", "", Feed::None)
+            }
+        };
+        let stream = Stream::start(feed, &ring);
+        let taps = vec![Tap::new(name.into(), format.into(), 2, ring, Some(stream))];
+        Self { source, errors, taps, consumed: 0 }
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub fn open(source: Source) -> Self {
         let mut taps = Vec::new();
         let mut errors = Vec::new();
@@ -235,9 +299,14 @@ impl Capture {
             .map(|tap| {
                 let mut ring = tap.ring.lock().unwrap();
                 let peaks = std::mem::take(&mut ring.peaks);
+                // On Android the Java side says what the source is doing.
+                #[cfg(target_os = "android")]
+                let format = Some(crate::android::status()).filter(|s| !s.is_empty()).unwrap_or_else(|| tap.format.clone());
+                #[cfg(not(target_os = "android"))]
+                let format = tap.format.clone();
                 TapStatus {
                     name: tap.name.clone(),
-                    format: tap.format.clone(),
+                    format,
                     receiving: tap.last_data.elapsed() < Duration::from_millis(500) && ring.total > 0,
                     peaks_db: peaks[..tap.channels.min(MAX_METERED_CHANNELS)]
                         .iter()
@@ -255,6 +324,7 @@ impl Tap {
     }
 
     /// Opening an input stream on an output device captures what it plays.
+    #[cfg(not(target_os = "android"))]
     fn open(device: cpal::Device, is_output: bool) -> Result<Self, String> {
         let name = device_name(&device);
         let config = if is_output { device.default_output_config() } else { device.default_input_config() }

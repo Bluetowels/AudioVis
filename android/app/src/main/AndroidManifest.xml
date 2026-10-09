@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The microphone, and (Android counts it as recording) what other apps play. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Capturing other apps has to run in a service that shows a notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!-- A USB MIDI controller is optional. -->
+    <uses-feature android:name="android.software.midi" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:label="AudioVis"
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+        <!-- The screen is drawn by the Rust library named in lib_name. Every
+             kind of change is listed so that turning the phone or plugging
+             something in never restarts the app. -->
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape">
+            <meta-data android:name="android.app.lib_name" android:value="audiovis" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+    </application>
+</manifest>

@@ -1,0 +1,56 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The app has one version number, kept in the Rust project.
+def cargo = file('../../visualiser/Cargo.toml').text
+def appVersion = (cargo =~ /(?m)^version\s*=\s*"([^"]+)"/)[0][1]
+def (major, minor, patch) = appVersion.tokenize('.').collect { it.toInteger() }
+
+// A signing key is optional. With these four set, every build is signed
+// with the same key, so a new version installs over the old one. Without
+// them the build is signed with a throwaway key made on the spot, and the
+// old version has to be uninstalled first.
+def keystore = System.getenv('ANDROID_KEYSTORE_FILE')
+
+android {
+    namespace 'com.bluetowel.audiovis'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.bluetowel.audiovis'
+        // Android 10: the first version that lets an app hear other apps.
+        minSdk 29
+        targetSdk 35
+        versionCode major * 10000 + minor * 100 + patch
+        versionName appVersion
+    }
+
+    signingConfigs {
+        release {
+            if (keystore) {
+                storeFile file(keystore)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystore ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}

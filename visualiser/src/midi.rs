@@ -164,6 +164,9 @@ pub struct Controller {
     pub last_message: Option<(u8, u8)>,
     /// When each button last sent a message, to flash it on the controller picture.
     pressed: HashMap<u8, std::time::Instant>,
+    /// When the list of controllers was last looked at.
+    #[cfg(target_os = "android")]
+    looked: std::time::Instant,
 }
 
 impl Controller {
@@ -179,6 +182,8 @@ impl Controller {
             top: HashMap::new(),
             last_message: None,
             pressed: HashMap::new(),
+            #[cfg(target_os = "android")]
+            looked: std::time::Instant::now(),
         };
         match Self::connect(name_contains) {
             Ok((connection, events, port)) => {
@@ -197,7 +202,10 @@ impl Controller {
             .ports()
             .into_iter()
             .find(|p| input.port_name(p).map(|n| n.contains(name_contains)).unwrap_or(false))
-            .ok_or_else(|| format!("no MIDI input named like \"{name_contains}\""))?;
+            .ok_or_else(|| match name_contains {
+                "" => "no MIDI controller plugged in".to_string(),
+                _ => format!("no MIDI input named like \"{name_contains}\""),
+            })?;
         let name = input.port_name(&port).map_err(|e| e.to_string())?;
         let (tx, rx) = channel();
         let connection = input
@@ -214,6 +222,32 @@ impl Controller {
             )
             .map_err(|e| e.to_string())?;
         Ok((connection, rx, name))
+    }
+
+    /// A phone's controller is plugged in and pulled out while the app runs,
+    /// so every couple of seconds look for one, or check ours is still there.
+    #[cfg(target_os = "android")]
+    pub fn reconnect(&mut self, name_contains: &str) {
+        if self.looked.elapsed().as_secs_f32() < 2.0 {
+            return;
+        }
+        self.looked = std::time::Instant::now();
+        if let Some(port) = &self.port {
+            let present = midir::MidiInput::new("audiovis")
+                .map(|input| input.ports().iter().any(|p| input.port_name(p).is_ok_and(|n| n == *port)))
+                .unwrap_or(false);
+            if present {
+                return;
+            }
+            (self._connection, self.events, self.port) = (None, None, None);
+            self.picked_up.clear();
+        }
+        match Self::connect(name_contains) {
+            Ok((connection, events, port)) => {
+                (self._connection, self.events, self.port, self.error) = (Some(connection), Some(events), Some(port), None);
+            }
+            Err(e) => self.error = Some(e),
+        }
     }
 
     /// A setting was changed from the GUI or a preset: its fader must catch up again.

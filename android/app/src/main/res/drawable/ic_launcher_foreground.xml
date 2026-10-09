@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The cross view in miniature: two notes on each axis, bright where they meet. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#5B2A86" android:pathData="M30,42h48v5h-48z" />
+    <path android:fillColor="#5B2A86" android:pathData="M30,61h48v5h-48z" />
+    <path android:fillColor="#5B2A86" android:pathData="M42,30h5v48h-5z" />
+    <path android:fillColor="#5B2A86" android:pathData="M61,30h5v48h-5z" />
+    <path android:fillColor="#FF9A3C" android:pathData="M41,41h7v7h-7z" />
+    <path android:fillColor="#FF9A3C" android:pathData="M60,41h7v7h-7z" />
+    <path android:fillColor="#FF9A3C" android:pathData="M41,60h7v7h-7z" />
+    <path android:fillColor="#FF9A3C" android:pathData="M60,60h7v7h-7z" />
+</vector>

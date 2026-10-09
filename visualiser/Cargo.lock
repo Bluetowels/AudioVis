@@ -424,11 +424,13 @@ dependencies = [
 name = "audiovis"
 version = "0.2.0"
 dependencies = [
+ "android-activity",
  "bytemuck",
  "cpal",
  "eframe",
  "egui-wgpu",
  "image",
+ "jni 0.21.1",
  "midir",
  "rustfft",
  "serde",

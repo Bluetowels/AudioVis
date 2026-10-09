@@ -1,6 +1,6 @@
 # AudioVis
 
-A full-screen, GPU-driven audio visualiser for Windows, with an experimental macOS build. It's built to respond as quickly as a fast spectrum analyser, and to show the shape of the music rather than just pulsing to the beat.
+A full-screen, GPU-driven audio visualiser for Windows, with experimental macOS and Android builds. It's built to respond as quickly as a fast spectrum analyser, and to show the shape of the music rather than just pulsing to the beat.
 
 Every pixel stands for a pair of frequencies, and its colour shows how loud those two frequencies are together. Silence is black. Bass hits send a pulse out from the centre in a contrasting colour.
 
@@ -67,6 +67,7 @@ In 3D, the picture is first drawn into a square map and its brightness becomes h
 
 - Windows 10 or 11, with a GPU that supports Vulkan (developed on an AMD Radeon RX 7900 XTX)
 - Or, experimentally, macOS 14.6 or later on Apple silicon or Intel. See [macOS](#macos).
+- Or, experimentally, Android 10 or later on a phone or tablet with Vulkan. See [Android](#android).
 <!-- source-only -->
 - To build from source: [Rust](https://rustup.rs) (stable, edition 2024) and the Visual Studio C++ Build Tools with a Windows SDK
 <!-- /source-only -->
@@ -97,6 +98,18 @@ installer/macos/build.sh
 ```
 
 Run on a Mac, this builds a universal `installer/output/AudioVis.app` and packages it as `installer/output/AudioVis-<version>.dmg`. The same script runs on GitHub Actions (`.github/workflows/macos.yml`), which keeps the disk image as a downloadable artifact of each run.
+
+### Android app
+
+```bash
+rustup target add aarch64-linux-android x86_64-linux-android
+android/build-native.sh
+gradle -p android assembleRelease
+```
+
+This needs the Android SDK and NDK (`ANDROID_HOME`, `ANDROID_NDK_HOME`), JDK 17 and Gradle 8.9 or later. The script builds the Rust library for phones and for the emulator, and Gradle packs it with a small Java layer (`android/app/src/main/java`) into `android/app/build/outputs/apk/release/app-release.apk`. The same steps run on GitHub Actions (`.github/workflows/android.yml`), which keeps the APK as a downloadable artifact of each run, then starts it in an emulator and keeps a screenshot.
+
+The APK is signed with a throwaway key unless a keystore is supplied through `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` (on GitHub, the secrets of the same names, with the keystore itself as `ANDROID_KEYSTORE_BASE64`). A build signed with a different key will not install over an older one: uninstall that first.
 <!-- /source-only -->
 
 ## Running
@@ -118,6 +131,29 @@ The macOS build is experimental: it is built and started automatically, but has 
 - **Permission to listen.** The first time it captures sound, macOS asks whether AudioVis may record system audio (or use the microphone, for an input). Without that permission the picture stays black. It can be changed later in System Settings > Privacy & Security.
 - **Output devices that also have inputs**, such as some USB audio interfaces, are captured from their input rather than from what they are playing.
 - It draws with Metal rather than Vulkan, and settings are kept in `~/Library/Application Support/AudioVis/`.
+
+### Android
+
+The Android build is experimental: it is built automatically and started in an emulator, but has not yet been tried on a real phone. It needs Android 10 or later and a graphics chip with Vulkan. Copy the APK to the phone and open it; Android asks once whether to allow installing apps from that source.
+
+It runs in landscape and fills the screen. A first run shows the built-in test signal, because every real source needs a permission. Choose a source under Audio source in the panel:
+
+- **Other apps' sound.** Whatever other apps are playing. Android asks each time, with its "start recording or casting?" question, and shows a notification while the app is listening. Apps can refuse to be captured, and many music streaming apps do: if the picture stays black with music playing, that is why. Calls, alarms and notification sounds are never included.
+- **Microphone.** The phone's microphone, without its noise reduction where the phone allows that.
+- **Audio file.** Pick a file and the app plays it out loud, on repeat, and draws it. It stops while the app is out of sight.
+- **Test signal.** The built-in kick, chord and hi-hat.
+
+Touch stands in for the keyboard and mouse:
+
+| Touch | Action |
+| --- | --- |
+| Tap the picture | Hide or show the panel |
+| Swipe across the picture | Next or previous palette |
+| Press and hold the picture | Palette menu |
+| Press and hold a slider | MIDI learn, clear binding, reset |
+| Double-tap a slider | Back to its default |
+
+A USB MIDI controller plugged into the phone (with a USB OTG adapter if needed) is picked up within a couple of seconds, whichever make it is, and works as it does on the desktop. Settings are saved as they change. There are no command-line options, and descriptions on hover need a mouse.
 
 ### If the picture stays black
 
@@ -304,7 +340,9 @@ Settings are saved automatically to `%APPDATA%\AudioVis\settings.json`, includin
 
 ```
 visualiser/        Rust app (eframe/egui UI, wgpu rendering)
-  src/main.rs      app, settings panel, 3D camera, command-line options
+  src/lib.rs       app, settings panel, 3D camera, command-line options
+  src/main.rs      the desktop program: starts the app in the library
+  src/android.rs   Android only: sound and requests passed to and from the Java layer
   src/audio.rs     audio capture (system output, named devices, inputs)
   src/analysis.rs  variable-Q spectrum, note sharpening and bass meter
   src/params.rs    every adjustable setting, its description, and the palettes
@@ -313,6 +351,7 @@ visualiser/        Rust app (eframe/egui UI, wgpu rendering)
   src/shader.wgsl  cross and circle views, 3D, rain, colour mapping
 installer/         Inno Setup script and build script for the Windows installer
 installer/macos/   build script and Info.plist for the macOS app and disk image
+android/           Gradle project, Java layer and build script for the Android APK
 preview/           Python offline prototypes that render mp4 previews
 ```
 

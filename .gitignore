@@ -38,3 +38,14 @@ desktop.ini
 # Installer build output and downloaded redistributable
 installer/output/
 installer/redist/
+
+# Android build output: the Rust library copied in for packaging, Gradle's
+# working folders, the finished APK, and any signing key
+android/app/src/main/jniLibs/
+android/.gradle/
+android/build/
+android/app/build/
+android/output/
+android/local.properties
+*.keystore
+*.jks

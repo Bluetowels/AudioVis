@@ -14,7 +14,12 @@ const MAX_ROWS: usize = 9;
 /// Side of the square map of the picture used by the 3D view, in pixels:
 /// [cross, circle]. Rings cut across the pixel grid at every angle, so the
 /// circle needs the finer map to keep the tops of thin walls smooth.
+#[cfg(not(target_os = "android"))]
 const MAP_SIZES: [u32; 2] = [2048, 4096];
+/// A phone has a smaller screen and far less graphics memory, so its maps
+/// are half the size each way.
+#[cfg(target_os = "android")]
+const MAP_SIZES: [u32; 2] = [1024, 2048];
 const MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// Raindrops simulated at full storm strength.
