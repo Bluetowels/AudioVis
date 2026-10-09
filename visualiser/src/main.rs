@@ -930,7 +930,9 @@ impl App {
         ui.painter().vline(x, track.top()..=track.top() + 4.0, mark);
         ui.painter().vline(x, track.bottom() - 4.0..=track.bottom(), mark);
         let on_track = response.interact_pointer_pos().or(response.hover_pos()).is_some_and(|p| track.contains(p));
-        let reset = response.double_clicked() && on_track;
+        // A slider only listens for drags, so it never reports a double-click
+        // itself; ask the pointer directly.
+        let reset = on_track && ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
         self.describe(&heading, &help);
         self.describe(&response, &help);
         if self.options.demo_hint.as_deref() == Some(d.key) {
