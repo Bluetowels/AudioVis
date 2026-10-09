@@ -23,8 +23,11 @@ Every pixel stands for a pair of frequencies, and its colour shows how loud thos
 
 - Windows 10 or 11. Audio capture uses WASAPI loopback, so other systems aren't supported.
 - A GPU with Vulkan support (developed on an AMD Radeon RX 7900 XTX)
+<!-- source-only -->
 - To build from source: [Rust](https://rustup.rs) (stable, edition 2024) and the Visual Studio C++ Build Tools with a Windows SDK
+<!-- /source-only -->
 
+<!-- source-only -->
 ## Building
 
 ```powershell
@@ -40,13 +43,17 @@ The executable ends up in `target\release\audiovis.exe`, or in your `CARGO_TARGE
 installer\build.ps1
 ```
 
-This builds the release executable and packages it as `installer\output\AudioVis-Setup-<version>.exe`. It needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`), and on first run it downloads Microsoft's Visual C++ redistributable into `installer\redist\` to bundle with the setup. Neither folder is committed.
+This builds the release executable and packages it as `installer\output\AudioVis-Setup-<version>.exe`. It needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`), and on first run it downloads Microsoft's Visual C++ redistributable into `installer\redist\` to bundle with the setup. Neither folder is committed. The script needs PowerShell 7, and converts this README to an HTML page that the installer shows when it finishes.
+<!-- /source-only -->
 
 ## Running
 
+<!-- installed-only: Start AudioVis from the Start menu, or from the desktop shortcut if you chose one. -->
+<!-- source-only -->
 ```powershell
 cargo run --release
 ```
+<!-- /source-only -->
 
 By default it captures the default Windows output device. Play some music and it reacts.
 
@@ -92,7 +99,9 @@ Rest the pointer on any setting to see a description of what it does; the "Descr
 
 The app uses Vulkan on the high-performance GPU by default. To override this, set the `WGPU_BACKEND` and `WGPU_POWER_PREF` environment variables.
 
+<!-- source-only -->
 For development there is a self-test: `--selftest file.png --seconds N` runs on default settings for N seconds, saves a screenshot, prints frame timings and exits. `--show-hint key` displays that slider's description in the screenshot.
+<!-- /source-only -->
 
 ## Settings
 
@@ -222,10 +231,13 @@ Settings are saved automatically to `%APPDATA%\AudioVis\settings.json`, includin
 
 - **A message box says it couldn't start the graphics card.** The app needs a GPU with Vulkan support and a current driver.
 - **Nothing appears in a terminal.** The release build has no console window of its own. Started from a terminal it prints there (`--list-devices`, the self-test); started from a shortcut, errors are shown in a message box.
+<!-- source-only -->
 - **"Access is denied" when running a freshly built exe.** Windows Defender's attack surface reduction rules can block new unsigned programs. Add an exclusion for the build output folder.
 - **The build fails with "failed to remove file audiovis.exe".** The app is still running; close it and build again.
+<!-- /source-only -->
 - **Tearing or stutter.** Check that nothing in the graphics driver is forcing vsync off, and use the FPS graph (F3) to see whether frames are being dropped.
 
+<!-- source-only -->
 ## Project layout
 
 ```
@@ -259,3 +271,4 @@ No music is included in this repository, and none should be committed. Use your 
 ## Status
 
 This is a personal project in active development. The repository is private and shared by invitation only.
+<!-- /source-only -->

@@ -1,5 +1,6 @@
 ; Inno Setup script for AudioVis. Build with installer\build.ps1, which
-; compiles the release exe, fetches the VC++ redistributable and runs ISCC.
+; compiles the release exe, fetches the VC++ redistributable, turns the README
+; into output\README.html and runs ISCC.
 
 #ifndef AppVersion
   #define AppVersion "0.1.0"
@@ -32,11 +33,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#ExePath}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "output\README.html"; DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: VCRedistNeeded
 
 [Icons]
 Name: "{group}\AudioVis"; Filename: "{app}\audiovis.exe"
+Name: "{group}\AudioVis guide"; Filename: "{app}\README.html"
 Name: "{group}\Uninstall AudioVis"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\AudioVis"; Filename: "{app}\audiovis.exe"; Tasks: desktopicon
 
