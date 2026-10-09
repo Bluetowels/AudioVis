@@ -15,6 +15,12 @@ struct Locals {
     /// 1 to do manual filtering for more predictable kittest snapshot images.
     /// See also https://github.com/emilk/egui/issues/5295
     predictable_texture_filtering: u32,
+
+    /// AudioVis: brightness of the interface on an HDR surface, in units of 80 nits.
+    hdr_ui_scale: f32,
+    padding_a: f32,
+    padding_b: f32,
+    padding_c: f32,
 };
 @group(0) @binding(0) var<uniform> r_locals: Locals;
 
@@ -147,14 +153,13 @@ fn fs_main_linear_framebuffer(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(out_color_linear, out_color_gamma.a);
 }
 
-// AudioVis: brightness of the interface on an HDR surface, in units of 80 nits.
-override hdr_ui_scale: f32 = 1.0;
-
+// AudioVis: on an HDR surface (linear, 1.0 = 80 nits) the interface is drawn
+// at a set brightness.
 @fragment
 fn fs_main_hdr_framebuffer(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_gamma = sample_texture(in);
     let out_color_gamma = in.color * tex_gamma;
-    return vec4<f32>(linear_from_gamma_rgb(out_color_gamma.rgb) * hdr_ui_scale, out_color_gamma.a);
+    return vec4<f32>(linear_from_gamma_rgb(out_color_gamma.rgb) * r_locals.hdr_ui_scale, out_color_gamma.a);
 }
 
 @fragment

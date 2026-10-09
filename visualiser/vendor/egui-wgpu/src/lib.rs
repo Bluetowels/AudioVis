@@ -419,6 +419,15 @@ impl Default for WgpuConfiguration {
 ///
 /// # Errors
 /// Returns [`WgpuError::NoSurfaceFormatsAvailable`] if the given list of formats is empty.
+/// AudioVis: brightness of the interface on an HDR surface, in units of 80
+/// nits, stored as the bits of an `f32`. The app updates it as its setting changes.
+pub static HDR_UI_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x4020_0000); // 2.5
+
+/// AudioVis: the current [`HDR_UI_SCALE`].
+pub fn hdr_ui_scale() -> f32 {
+    f32::from_bits(HDR_UI_SCALE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 pub fn preferred_framebuffer_format(
     formats: &[wgpu::TextureFormat],
 ) -> Result<wgpu::TextureFormat, WgpuError> {

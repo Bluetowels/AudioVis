@@ -201,7 +201,7 @@ fn main() -> eframe::Result {
     let vsync_active = options.vsync && (saved_vsync || options.selftest.is_some());
 
     // HDR is also fixed when the window is created. The copy of egui-wgpu in
-    // vendor/ reads these two when it chooses the surface and draws the panel.
+    // vendor/ reads this when it chooses the surface.
     let saved: Option<serde_json::Value> = std::fs::read_to_string(config_dir().join("settings.json"))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok());
@@ -212,11 +212,9 @@ fn main() -> eframe::Result {
             .and_then(|v| v.pointer("/params/values/hdr_base"))
             .and_then(|v| v.as_f64())
             .unwrap_or(200.0);
+        eframe::egui_wgpu::HDR_UI_SCALE.store(((base / 80.0) as f32).to_bits(), std::sync::atomic::Ordering::Relaxed);
         // SAFETY: nothing else is running yet.
-        unsafe {
-            std::env::set_var("AUDIOVIS_HDR", "1");
-            std::env::set_var("AUDIOVIS_HDR_UI_SCALE", format!("{}", base / 80.0));
-        }
+        unsafe { std::env::set_var("AUDIOVIS_HDR", "1") };
     }
     native.wgpu_options.surface.present_mode = if vsync_active {
         // Plain Fifo, not AutoVsync: that prefers a mode which shows a late
@@ -1305,6 +1303,8 @@ impl eframe::App for App {
 
         self.controller.apply(&mut self.params, &mut self.bindings, &mut self.learning, &mut self.show_panel, &mut self.show_surface);
         self.params.glide(dt);
+        // The panel is drawn at the picture's base brightness.
+        eframe::egui_wgpu::HDR_UI_SCALE.store((self.params.get(P::HdrBase) / 80.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
         self.frame_dt = dt.min(0.05);
         self.flight_time += dt * self.params.get(P::Flight);
         let orbit = self.params.get(P::Orbit);
@@ -1380,19 +1380,6 @@ impl eframe::App for App {
             let elapsed = self.started.elapsed().as_secs_f32();
             if elapsed > self.options.seconds - 3.0 && !self.shot_requested {
                 self.recent.push(dt * 1000.0);
-            }
-            if elapsed > self.options.seconds && self.hdr_active && !self.shot_requested {
-                // An HDR surface can't be captured as a screenshot: report and close.
-                self.shot_requested = true;
-                self.recent.sort_by(|a, b| a.total_cmp(b));
-                println!(
-                    "selftest (HDR, no screenshot): {} frames in {elapsed:.2} s = {:.1} fps, median frame {:.2} ms, adapter {}",
-                    self.frames,
-                    self.frames as f32 / elapsed,
-                    self.recent.get(self.recent.len() / 2).copied().unwrap_or(0.0),
-                    self.adapter
-                );
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             if elapsed > self.options.seconds && !self.shot_requested {
                 self.shot_requested = true;

@@ -82,7 +82,7 @@ impl CaptureState {
             view_formats: &[],
         });
 
-        let padding = BufferPadding::new(surface_texture.width());
+        let padding = BufferPadding::new(surface_texture.width(), surface_texture.format());
 
         let view = texture.create_view(&Default::default());
 
@@ -194,8 +194,10 @@ impl CaptureState {
         let format = self.texture.format();
         let tex_extent = self.texture.size();
         let padding = self.padding;
+        let hdr = format == wgpu::TextureFormat::Rgba16Float;
+        let hdr_scale = crate::hdr_ui_scale();
         let to_rgba = match format {
-            wgpu::TextureFormat::Rgba8Unorm => [0, 1, 2, 3],
+            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba16Float => [0, 1, 2, 3],
             wgpu::TextureFormat::Bgra8Unorm => [2, 1, 0, 3],
             _ => {
                 log::error!(
@@ -221,6 +223,21 @@ impl CaptureState {
             };
             for padded_row in mapped_range.chunks(padding.padded_bytes_per_row as usize) {
                 let row = &padded_row[..padding.unpadded_bytes_per_row as usize];
+                if hdr {
+                    // AudioVis: bring an HDR picture into the ordinary range. The
+                    // interface's brightness becomes white, and anything brighter
+                    // is rolled off toward white instead of being cut off.
+                    for color in row.chunks(8) {
+                        let channel = |i: usize| {
+                            let v = half_to_f32(u16::from_le_bytes([color[2 * i], color[2 * i + 1]])).max(0.0) / hdr_scale;
+                            let v = if v <= 0.8 { v } else { 0.8 + 0.2 * (1.0 - (-(v - 0.8) / 0.6).exp()) };
+                            let srgb = if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+                            (srgb.clamp(0.0, 1.0) * 255.0).round() as u8
+                        };
+                        pixels.push(epaint::Color32::from_rgba_premultiplied(channel(0), channel(1), channel(2), 255));
+                    }
+                    continue;
+                }
                 for color in row.chunks(4) {
                     pixels.push(epaint::Color32::from_rgba_premultiplied(
                         color[to_rgba[0]],
@@ -247,6 +264,18 @@ impl CaptureState {
     }
 }
 
+/// AudioVis: a 16-bit float as stored in an `Rgba16Float` texture.
+fn half_to_f32(h: u16) -> f32 {
+    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exponent = ((h >> 10) & 0x1f) as i32;
+    let mantissa = (h & 0x3ff) as f32;
+    sign * match exponent {
+        0 => mantissa * 2f32.powi(-24),
+        31 => f32::MAX,
+        e => (1.0 + mantissa / 1024.0) * 2f32.powi(e - 15),
+    }
+}
+
 #[derive(Copy, Clone)]
 struct BufferPadding {
     unpadded_bytes_per_row: u32,
@@ -254,8 +283,9 @@ struct BufferPadding {
 }
 
 impl BufferPadding {
-    fn new(width: u32) -> Self {
-        let bytes_per_pixel = core::mem::size_of::<u32>() as u32;
+    fn new(width: u32, format: wgpu::TextureFormat) -> Self {
+        // AudioVis: a 16-bit float (HDR) surface has eight bytes per pixel.
+        let bytes_per_pixel = if format == wgpu::TextureFormat::Rgba16Float { 8 } else { 4 };
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let padded_bytes_per_row =
             wgpu::util::align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);

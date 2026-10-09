@@ -150,6 +150,10 @@ struct UniformBuffer {
     ///
     /// See also <https://github.com/emilk/egui/issues/5295>.
     predictable_texture_filtering: u32,
+
+    /// AudioVis: brightness of the interface on an HDR surface, in units of 80 nits.
+    hdr_ui_scale: f32,
+    _padding: [f32; 3],
 }
 
 struct SlicedBuffer {
@@ -287,6 +291,8 @@ impl Renderer {
                 screen_size_in_points: [0.0, 0.0],
                 dithering: u32::from(options.dithering),
                 predictable_texture_filtering: u32::from(options.predictable_texture_filtering),
+                hdr_ui_scale: crate::hdr_ui_scale(),
+                _padding: [0.0; 3],
             }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -406,15 +412,8 @@ impl Renderer {
 
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
-                    // AudioVis: on an HDR surface the interface is drawn at a
-                    // fixed brightness (given in units of 80 nits).
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[(
-                            "hdr_ui_scale",
-                            std::env::var("AUDIOVIS_HDR_UI_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(2.5),
-                        )],
-                        ..Default::default()
-                    },
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    // AudioVis: an HDR surface gets its own fragment shader.
                     entry_point: Some(if output_color_format == wgpu::TextureFormat::Rgba16Float {
                         "fs_main_hdr_framebuffer"
                     } else if output_color_format.is_srgb() {
@@ -939,6 +938,8 @@ impl Renderer {
             screen_size_in_points,
             dithering: u32::from(self.options.dithering),
             predictable_texture_filtering: u32::from(self.options.predictable_texture_filtering),
+            hdr_ui_scale: crate::hdr_ui_scale(),
+            _padding: [0.0; 3],
         };
         if uniform_buffer_content != self.previous_uniform_buffer_content {
             profiling::scope!("update uniforms");

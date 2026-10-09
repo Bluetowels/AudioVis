@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **HDR output on Windows.** On an HDR display the picture can use brightness above ordinary white, with base and peak brightness sliders and a test pattern. Off by default; tick "HDR output" or start with `--hdr`.
+
 ## 0.2.0 (2026-10-09)
 
 The first release.
