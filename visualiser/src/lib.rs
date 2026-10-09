@@ -1172,6 +1172,10 @@ impl App {
         // Brightness follows the bass. In HDR the words stay at the panel's
         // steady white, well under the picture's peaks.
         let level = if self.hdr_active || !self.params.bass_boost { 1.0 } else { 0.6 + 0.4 * self.bass_env };
+        if self.params.shape == Shape::Circle {
+            self.draw_lyrics_arc(painter, picture, &lines, t - LEAD_S, size, level);
+            return;
+        }
         let smooth = |x: f64| {
             let x = x.clamp(0.0, 1.0) as f32;
             x * x * (3.0 - 2.0 * x)
@@ -1226,6 +1230,123 @@ impl App {
         if let Some(line) = next.filter(|line| self.params.lyrics_preview && !line.text.is_empty()) {
             let opacity = 0.5 * if current.is_some() { arrive } else { 1.0 };
             text(&[(line.text.as_str(), 0.85)], (size * 0.5 * 2.0).round() / 2.0, middle + height / 2.0 + gap, 0.0, opacity);
+        }
+    }
+
+    /// Circle view: the lyrics run round the top of the circle and scroll
+    /// past twelve o'clock as they are sung, each line following the last.
+    fn draw_lyrics_arc(&self, painter: &egui::Painter, picture: egui::Rect, lines: &[lyrics::Line], now: f64, size: f32, level: f32) {
+        /// Letters fade out between these angles either side of the top.
+        const FADE: (f32, f32) = (55.0, 80.0);
+        let font = egui::FontId::proportional(size);
+        // To the foot of the letters, kept clear of the top of the picture.
+        let shorter = picture.width().min(picture.height());
+        let radius = (0.40 * shorter).min(0.5 * shorter - 1.35 * size).max(2.0 * size);
+        let gap = 1.6 * size;
+        let reach = FADE.1.to_radians() * radius;
+        // Each letter of a line is placed on its own, with its width.
+        let letters = |line: &lyrics::Line| -> Vec<(std::sync::Arc<egui::Galley>, f32)> {
+            line.text
+                .chars()
+                .map(|c| {
+                    let galley = painter.layout_no_wrap(c.to_string(), font.clone(), egui::Color32::WHITE);
+                    let width = galley.size().x;
+                    (galley, width)
+                })
+                .collect()
+        };
+        let width = |letters: &[(std::sync::Arc<egui::Galley>, f32)]| letters.iter().map(|l| l.1).sum::<f32>();
+
+        let centre = picture.center();
+        let smooth = |x: f32| {
+            let x = x.clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x)
+        };
+        // Draw a line with its left end `x` points clockwise along the arc from the top.
+        let draw = |letters: &[(std::sync::Arc<egui::Galley>, f32)], mut x: f32| {
+            for (galley, width) in letters {
+                let along = x + 0.5 * width;
+                x += width;
+                let angle = along / radius;
+                if angle.abs() >= FADE.1.to_radians() {
+                    continue;
+                }
+                let opacity = 1.0 - smooth((angle.abs().to_degrees() - FADE.0) / (FADE.1 - FADE.0));
+                // Letters brighten as they pass the top, which is where the song has got to.
+                let brightness = 0.55 + 0.45 * smooth(0.5 - along / size);
+                let (sin, cos) = angle.sin_cos();
+                let (outward, forward) = (egui::vec2(sin, -cos), egui::vec2(cos, sin));
+                let corner = centre + outward * (radius + galley.size().y) - forward * (0.5 * width);
+                let place = |offset: egui::Vec2, colour: egui::Color32| {
+                    painter.add(egui::epaint::TextShape::new(corner + offset, galley.clone(), colour).with_angle(angle).with_override_text_color(colour));
+                };
+                let shadow = egui::Color32::from_black_alpha((210.0 * opacity) as u8);
+                let d = (size * 0.045).max(1.0);
+                for offset in [egui::vec2(d, d), egui::vec2(-d, d), egui::vec2(d, -d), egui::vec2(-d, -d)] {
+                    place(offset, shadow);
+                }
+                place(egui::Vec2::ZERO, egui::Color32::from_gray((255.0 * brightness * level).round() as u8).gamma_multiply(opacity));
+            }
+        };
+
+        let started = lines.partition_point(|line| line.start <= now);
+        let Some(current) = started.checked_sub(1) else {
+            // Before the first line: it waits with its first letter at the top.
+            if let Some(first) = lines.first() {
+                draw(&letters(first), 0.0);
+            }
+            return;
+        };
+        let line = &lines[current];
+        let glyphs = letters(line);
+        let whole = width(&glyphs);
+
+        // How far the line has moved past the top. It crosses in the time it
+        // takes to sing, then the next line waits at the top for its turn.
+        // With word timings, each word reaches the top as it is sung.
+        let next_start = lines.get(current + 1).map_or(f64::MAX, |next| next.start);
+        let mut marks = vec![(line.start, 0.0)];
+        let mut end = line.start + (0.15 * glyphs.len() as f64).max(2.0);
+        if let Some((last, _)) = line.words.last() {
+            let mut letter = glyphs.iter();
+            let mut x = 0.0;
+            for (start, word) in &line.words {
+                marks.push((*start, x));
+                x += letter.by_ref().take(word.chars().count()).map(|l| l.1).sum::<f32>();
+            }
+            end = last + 1.5;
+        }
+        marks.push((end.min(next_start), whole + gap));
+        let mut moved = whole + gap;
+        for pair in marks.windows(2) {
+            let ((t0, x0), (t1, x1)) = (pair[0], pair[1]);
+            if now < t1 && t1 > t0 {
+                moved = x0 + (x1 - x0) * ((now - t0) / (t1 - t0)).clamp(0.0, 1.0) as f32;
+                break;
+            }
+        }
+
+        draw(&glyphs, -moved);
+        // The lines already sung, going away anticlockwise.
+        let mut right = -moved - gap;
+        for earlier in lines[..current].iter().rev() {
+            if right < -reach {
+                break;
+            }
+            let glyphs = letters(earlier);
+            right -= width(&glyphs);
+            draw(&glyphs, right);
+            right -= gap;
+        }
+        // The lines to come, arriving clockwise.
+        let mut left = -moved + whole + gap;
+        for later in &lines[current + 1..] {
+            if left > reach {
+                break;
+            }
+            let glyphs = letters(later);
+            draw(&glyphs, left);
+            left += width(&glyphs) + gap;
         }
     }
 
