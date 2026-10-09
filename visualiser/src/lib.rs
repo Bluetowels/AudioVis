@@ -1233,8 +1233,9 @@ impl App {
         }
     }
 
-    /// Circle view: the lyrics run round the top of the circle and scroll
-    /// past twelve o'clock as they are sung, each line following the last.
+    /// Circle view: the lyrics run round the far side of the circle and
+    /// scroll past its top as they are sung, each line following the last.
+    /// They lie on the picture, so in 3D they tilt and turn with it.
     fn draw_lyrics_arc(&self, painter: &egui::Painter, picture: egui::Rect, lines: &[lyrics::Line], now: f64, size: f32, level: f32) {
         /// Letters fade out between these angles either side of the top.
         const FADE: (f32, f32) = (55.0, 80.0);
@@ -1244,75 +1245,129 @@ impl App {
         let radius = (0.40 * shorter).min(0.5 * shorter - 1.35 * size).max(2.0 * size);
         let gap = 1.6 * size;
         let reach = FADE.1.to_radians() * radius;
-        // Each letter of a line is placed on its own, with its width.
-        let letters = |line: &lyrics::Line| -> Vec<(std::sync::Arc<egui::Galley>, f32)> {
-            line.text
-                .chars()
-                .map(|c| {
-                    let galley = painter.layout_no_wrap(c.to_string(), font.clone(), egui::Color32::WHITE);
-                    let width = galley.size().x;
-                    (galley, width)
-                })
-                .collect()
-        };
-        let width = |letters: &[(std::sync::Arc<egui::Galley>, f32)]| letters.iter().map(|l| l.1).sum::<f32>();
-
         let centre = picture.center();
         let smooth = |x: f32| {
             let x = x.clamp(0.0, 1.0);
             x * x * (3.0 - 2.0 * x)
         };
-        // Draw a line with its left end `x` points clockwise along the arc from the top.
-        let draw = |letters: &[(std::sync::Arc<egui::Galley>, f32)], mut x: f32| {
-            for (galley, width) in letters {
-                let along = x + 0.5 * width;
-                x += width;
-                let angle = along / radius;
-                if angle.abs() >= FADE.1.to_radians() {
-                    continue;
-                }
-                let opacity = 1.0 - smooth((angle.abs().to_degrees() - FADE.0) / (FADE.1 - FADE.0));
-                // Letters brighten as they pass the top, which is where the song has got to.
-                let brightness = 0.55 + 0.45 * smooth(0.5 - along / size);
-                let (sin, cos) = angle.sin_cos();
-                let (outward, forward) = (egui::vec2(sin, -cos), egui::vec2(cos, sin));
-                let corner = centre + outward * (radius + galley.size().y) - forward * (0.5 * width);
-                let place = |offset: egui::Vec2, colour: egui::Color32| {
-                    painter.add(egui::epaint::TextShape::new(corner + offset, galley.clone(), colour).with_angle(angle).with_override_text_color(colour));
-                };
-                let shadow = egui::Color32::from_black_alpha((210.0 * opacity) as u8);
-                let d = (size * 0.045).max(1.0);
-                for offset in [egui::vec2(d, d), egui::vec2(-d, d), egui::vec2(d, -d), egui::vec2(-d, -d)] {
-                    place(offset, shadow);
-                }
-                place(egui::Vec2::ZERO, egui::Color32::from_gray((255.0 * brightness * level).round() as u8).gamma_multiply(opacity));
+
+        // Where a point on the picture is on screen: `angle` clockwise from the
+        // top of the circle and `r` points out from its centre. Flat, that is
+        // plain geometry. In 3D the point is on the ground the surface rises from
+        // (see `relief_view` in the shader), and "the top" is the far side
+        // from wherever the camera is, so the words always face it.
+        let p = &self.params;
+        let relief = p.get(P::Tilt) > 0.05 || p.get(P::Flight) > 0.0;
+        let (eye, target) = self.camera;
+        let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+        let unit = |a: [f32; 3]| {
+            let length = dot(a, a).sqrt().max(1e-6);
+            [a[0] / length, a[1] / length, a[2] / length]
+        };
+        let forward = unit(sub(target, eye));
+        let right = unit(cross(forward, [0.0, 0.0, 1.0]));
+        let up = cross(right, forward);
+        let away = forward[0].hypot(forward[1]);
+        let far = if away > 1e-3 { [forward[0] / away, forward[1] / away] } else { [0.0, 1.0] };
+        let spread = 0.5 / 1.3;
+        let aspect = picture.width() / picture.height().max(1.0);
+        let place = |angle: f32, r: f32| -> Option<egui::Pos2> {
+            let (sin, cos) = angle.sin_cos();
+            if !relief {
+                return Some(centre + egui::vec2(sin, -cos) * r);
             }
+            let r = r / picture.height();
+            let from_eye = sub([r * (far[0] * cos + far[1] * sin), r * (far[1] * cos - far[0] * sin), 0.0], eye);
+            let depth = dot(from_eye, forward);
+            (depth > 0.05).then(|| {
+                let x = dot(from_eye, right) / (depth * aspect * spread);
+                let y = dot(from_eye, up) / (depth * spread);
+                centre + egui::vec2(x * picture.width(), -y * picture.height()) * 0.5
+            })
+        };
+
+        // A line is laid out straight, then every corner of every letter is
+        // moved to its place on the picture.
+        let layout = |line: &lyrics::Line| painter.layout_no_wrap(line.text.clone(), font.clone(), egui::Color32::WHITE);
+        // Draw a line with its left end `x` points clockwise along the arc from the top.
+        let atlas = painter.ctx().fonts(|fonts| fonts.font_image_size());
+        let draw = |galley: &egui::Galley, x: f32| {
+            let tall = galley.size().y;
+            let d = (size * 0.045).max(1.0);
+            let mut shadow = egui::Mesh::default();
+            let mut letters = egui::Mesh::default();
+            for row in &galley.rows {
+                let source = &row.visuals.mesh;
+                (shadow.texture_id, letters.texture_id) = (source.texture_id, source.texture_id);
+                // Each corner's new place and colour, or nothing if it is out of sight.
+                let corners: Vec<Option<(egui::Pos2, egui::Color32, egui::Color32)>> = source
+                    .vertices
+                    .iter()
+                    .map(|v| {
+                        let along = x + row.pos.x + v.pos.x;
+                        let angle = along / radius;
+                        let opacity = 1.0 - smooth((angle.abs().to_degrees() - FADE.0) / (FADE.1 - FADE.0));
+                        if opacity <= 0.0 {
+                            return None;
+                        }
+                        // Letters brighten as they pass the top, which is where the song has got to.
+                        let brightness = 0.55 + 0.45 * smooth(0.5 - along / size);
+                        let at = place(angle, radius + tall - (row.pos.y + v.pos.y))?;
+                        let colour = egui::Color32::from_gray((255.0 * brightness * level).round() as u8).gamma_multiply(opacity);
+                        Some((at, colour, egui::Color32::from_black_alpha((210.0 * opacity) as u8)))
+                    })
+                    .collect();
+                for triangle in source.indices.chunks_exact(3) {
+                    let [Some(a), Some(b), Some(c)] = [0, 1, 2].map(|k| corners[triangle[k] as usize]) else { continue };
+                    // A laid-out letter gives its place in the font picture in pixels; a mesh wants 0 to 1.
+                    let uv = |k: usize| {
+                        let uv = source.vertices[triangle[k] as usize].uv;
+                        egui::pos2(uv.x / atlas[0] as f32, uv.y / atlas[1] as f32)
+                    };
+                    let first = letters.vertices.len() as u32;
+                    for (k, (pos, color, _)) in [a, b, c].into_iter().enumerate() {
+                        letters.vertices.push(egui::epaint::Vertex { pos, uv: uv(k), color });
+                    }
+                    letters.indices.extend([first, first + 1, first + 2]);
+                    // A dark copy behind, on each diagonal, keeps it readable over a bright picture.
+                    for offset in [egui::vec2(d, d), egui::vec2(-d, d), egui::vec2(d, -d), egui::vec2(-d, -d)] {
+                        let first = shadow.vertices.len() as u32;
+                        for (k, (pos, _, color)) in [a, b, c].into_iter().enumerate() {
+                            shadow.vertices.push(egui::epaint::Vertex { pos: pos + offset, uv: uv(k), color });
+                        }
+                        shadow.indices.extend([first, first + 1, first + 2]);
+                    }
+                }
+            }
+            painter.add(shadow);
+            painter.add(letters);
         };
 
         let started = lines.partition_point(|line| line.start <= now);
         let Some(current) = started.checked_sub(1) else {
             // Before the first line: it waits with its first letter at the top.
             if let Some(first) = lines.first() {
-                draw(&letters(first), 0.0);
+                draw(&layout(first), 0.0);
             }
             return;
         };
         let line = &lines[current];
-        let glyphs = letters(line);
-        let whole = width(&glyphs);
+        let galley = layout(line);
+        let whole = galley.size().x;
 
         // How far the line has moved past the top. It crosses in the time it
         // takes to sing, then the next line waits at the top for its turn.
         // With word timings, each word reaches the top as it is sung.
         let next_start = lines.get(current + 1).map_or(f64::MAX, |next| next.start);
         let mut marks = vec![(line.start, 0.0)];
-        let mut end = line.start + (0.15 * glyphs.len() as f64).max(2.0);
-        if let Some((last, _)) = line.words.last() {
-            let mut letter = glyphs.iter();
-            let mut x = 0.0;
+        let mut end = line.start + (0.15 * line.text.chars().count() as f64).max(2.0);
+        if let (Some((last, _)), Some(row)) = (line.words.last(), galley.rows.first()) {
+            let mut letter = 0;
             for (start, word) in &line.words {
-                marks.push((*start, x));
-                x += letter.by_ref().take(word.chars().count()).map(|l| l.1).sum::<f32>();
+                marks.push((*start, row.glyphs.get(letter).map_or(whole, |glyph| glyph.pos.x)));
+                letter += word.chars().count();
             }
             end = last + 1.5;
         }
@@ -1326,27 +1381,27 @@ impl App {
             }
         }
 
-        draw(&glyphs, -moved);
+        draw(&galley, -moved);
         // The lines already sung, going away anticlockwise.
-        let mut right = -moved - gap;
+        let mut right_end = -moved - gap;
         for earlier in lines[..current].iter().rev() {
-            if right < -reach {
+            if right_end < -reach {
                 break;
             }
-            let glyphs = letters(earlier);
-            right -= width(&glyphs);
-            draw(&glyphs, right);
-            right -= gap;
+            let galley = layout(earlier);
+            right_end -= galley.size().x;
+            draw(&galley, right_end);
+            right_end -= gap;
         }
         // The lines to come, arriving clockwise.
-        let mut left = -moved + whole + gap;
+        let mut left_end = -moved + whole + gap;
         for later in &lines[current + 1..] {
-            if left > reach {
+            if left_end > reach {
                 break;
             }
-            let glyphs = letters(later);
-            draw(&glyphs, left);
-            left += width(&glyphs) + gap;
+            let galley = layout(later);
+            draw(&galley, left_end);
+            left_end += galley.size().x + gap;
         }
     }
 

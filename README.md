@@ -306,7 +306,7 @@ Windows only.
 
 The line being sung sits in the middle of the picture. The line before fades out above it and the line to come waits below. Each line appears about 150 ms before it's sung. Where the lyrics have a time for every word, the words brighten as they're sung. The text brightens with the bass; in HDR it stays at the base brightness.
 
-In the circle view the lyrics instead run round the top of the circle and scroll: each letter passes twelve o'clock as it's sung and brightens there, earlier lines move away to the left and the lines to come arrive from the right. "Show the next line" has no effect there.
+In the circle view the lyrics instead run round the top of the circle and scroll: each letter passes twelve o'clock as it's sung and brightens there, earlier lines move away to the left and the lines to come arrive from the right. "Show the next line" has no effect there. In 3D the words lie on the picture, on the far side of the circle from the camera, so they tilt, turn and fly with it; steep tilts make them small, and Lyrics size makes up for it.
 
 **Where the lyrics come from.** The app reads the title, artist, album and length of what's playing from Windows' media controls (the same details the volume flyout shows), which Spotify, Tidal, browsers and most players fill in. It then looks the track up on [LRCLIB](https://lrclib.net), a free, crowd-sourced lyrics database. Only tracks that have time-synced lyrics there are shown, so some tracks have none, and the timings are only as good as whoever contributed them. The lyrics remain the copyright of their owners. They're fetched when a track plays, for display on your own screen, and nothing in this project redistributes them.
 
