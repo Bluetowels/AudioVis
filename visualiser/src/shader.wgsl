@@ -28,6 +28,8 @@ struct Uniforms {
     cam_target: vec4<f32>,
     // seconds since the last frame, number of raindrops in use, unused, unused
     sim: vec4<f32>,
+    // HDR output on (1) or off (0), base brightness and peak brightness in units of 80 nits, unused
+    hdr: vec4<f32>,
     // black, then up to eight colours from quiet to loud
     stops: array<vec4<f32>, 9>,
 };
@@ -478,10 +480,21 @@ fn relief_view(screen: vec2<f32>) -> vec3<f32> {
     return clamp(colour, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// Final step for every colour. On a standard display, nothing. On an HDR
+// display the surface is linear and 1.0 means 80 nits: ordinary colours are
+// shown at the base brightness and the brightest ones climb to the peak.
+fn to_display(colour: vec3<f32>) -> vec3<f32> {
+    if (u.hdr.x < 0.5) { return colour; }
+    let c = max(colour, vec3<f32>(0.0));
+    let linear = select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+    let brightest = min(max(c.r, max(c.g, c.b)), 1.0);
+    return linear * mix(u.hdr.y, u.hdr.z, pow(brightest, 3.0));
+}
+
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4<f32> {
-    if (u.relief.x > 0.5) { return vec4<f32>(relief_view(in.uv), 1.0); }
-    return vec4<f32>(shade(in.uv, field(in.uv)), 1.0);
+    if (u.relief.x > 0.5) { return vec4<f32>(to_display(relief_view(in.uv)), 1.0); }
+    return vec4<f32>(to_display(shade(in.uv, field(in.uv))), 1.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -607,5 +620,5 @@ fn vs_drop(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
 @fragment
 fn fs_drop(in: DropOut) -> @location(0) vec4<f32> {
     let soft = 1.0 - in.side * in.side;
-    return vec4<f32>(vec3<f32>(0.62, 0.80, 1.00) * in.glow * soft, 0.0);
+    return vec4<f32>(to_display(vec3<f32>(0.62, 0.80, 1.00) * in.glow * soft), 0.0);
 }
