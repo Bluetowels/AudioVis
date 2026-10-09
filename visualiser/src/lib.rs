@@ -299,7 +299,7 @@ fn start(options: Options, mut native: eframe::NativeOptions) -> eframe::Result 
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok());
     let saved_hdr = saved.as_ref().and_then(|v| v.get("hdr")).and_then(|v| v.as_bool()).unwrap_or(false);
-    if options.hdr || (saved_hdr && options.selftest.is_none()) {
+    if cfg!(windows) && (options.hdr || (saved_hdr && options.selftest.is_none())) {
         let base = saved
             .as_ref()
             .and_then(|v| v.pointer("/params/values/hdr_base"))
@@ -1221,7 +1221,8 @@ impl App {
                 let r = ui.toggle_value(&mut self.show_fps_graph, "FPS graph");
                 self.describe(&r, "Show a graph of the frame rate over the last two seconds in the top-left corner of the picture, so dips and stutters are visible. Also on F3.");
             });
-            #[cfg(not(target_os = "android"))]
+            // HDR output has only been built and tried on Windows.
+            #[cfg(windows)]
             {
             let label = match (self.hdr, self.hdr_active) {
                 (true, true) => "HDR output (on)",

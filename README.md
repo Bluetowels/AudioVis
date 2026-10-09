@@ -192,7 +192,7 @@ Rest the pointer on any setting to see a description of what it does; the "Descr
 | `--underlay` | Start with the bass drawn as a fill of the dark areas |
 | `--controller` | Start with the picture of the controller showing |
 | `--fps` | Start with the FPS counter and graph showing (first run or self-test only) |
-| `--hdr` | Ask for HDR output on this run |
+| `--hdr` | Ask for HDR output on this run (Windows only) |
 | `--no-vsync` | Uncap the frame rate for this run |
 | `--midi-port NAME` | Use a specific MIDI input port |
 | `--set key=value` | Set any slider by its key, e.g. `--set bass_amount=2` |
