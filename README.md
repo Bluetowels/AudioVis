@@ -1,12 +1,12 @@
 # AudioVis
 
-A full-screen, GPU-driven audio visualiser for Windows. It's built to respond as quickly as a fast spectrum analyser, and to show the shape of the music rather than just pulsing to the beat.
+A full-screen, GPU-driven audio visualiser for Windows, with an experimental macOS build. It's built to respond as quickly as a fast spectrum analyser, and to show the shape of the music rather than just pulsing to the beat.
 
 Every pixel stands for a pair of frequencies, and its colour shows how loud those two frequencies are together. Silence is black. Bass hits send a pulse out from the centre in a contrasting colour.
 
 ## What it does
 
-- **Live system audio.** It listens to whatever Windows is playing (WASAPI loopback). It can also capture one or more named output devices or an input such as a microphone.
+- **Live system audio.** It listens to whatever the computer is playing (WASAPI loopback on Windows, a Core Audio tap on macOS). It can also capture one or more named output devices or an input such as a microphone.
 - **Fast analysis.** The spectrum is variable-Q: 36 bins per octave across nine octaves from A0 (27.5 Hz). Every bin ends at the newest sample, so high notes appear immediately and nothing waits on the long bass windows.
 - **Two views:**
   - **Cross**: x and y are both frequency, and a pixel lights when both of its frequencies are sounding. It can be mirrored into four quadrants and flipped on either axis.
@@ -21,8 +21,8 @@ Every pixel stands for a pair of frequencies, and its colour shows how loud thos
 
 ## Requirements
 
-- Windows 10 or 11. Audio capture uses WASAPI loopback, so other systems aren't supported.
-- A GPU with Vulkan support (developed on an AMD Radeon RX 7900 XTX)
+- Windows 10 or 11, with a GPU that supports Vulkan (developed on an AMD Radeon RX 7900 XTX)
+- Or, experimentally, macOS 14.6 or later on Apple silicon or Intel. See [macOS](#macos).
 <!-- source-only -->
 - To build from source: [Rust](https://rustup.rs) (stable, edition 2024) and the Visual Studio C++ Build Tools with a Windows SDK
 <!-- /source-only -->
@@ -44,6 +44,15 @@ installer\build.ps1
 ```
 
 This builds the release executable and packages it as `installer\output\AudioVis-Setup-<version>.exe`. It needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`), and on first run it downloads Microsoft's Visual C++ redistributable into `installer\redist\` to bundle with the setup. Neither folder is committed. The script needs PowerShell 7, and converts this README to an HTML page that the installer shows when it finishes.
+
+### macOS app
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+installer/macos/build.sh
+```
+
+Run on a Mac, this builds a universal `installer/output/AudioVis.app` and packages it as `installer/output/AudioVis-<version>.dmg`. The same script runs on GitHub Actions (`.github/workflows/macos.yml`), which keeps the disk image as a downloadable artifact of each run.
 <!-- /source-only -->
 
 ## Running
@@ -55,7 +64,16 @@ cargo run --release
 ```
 <!-- /source-only -->
 
-By default it captures the default Windows output device. Play some music and it reacts.
+By default it captures the default output device. Play some music and it reacts.
+
+### macOS
+
+The macOS build is experimental: it is built and started automatically, but has not yet been tried on a real Mac.
+
+- **Opening it the first time.** The app isn't signed with an Apple developer certificate, so macOS refuses to open a downloaded copy. Drag AudioVis to Applications, try to open it, then go to System Settings > Privacy & Security and choose Open Anyway.
+- **Permission to listen.** The first time it captures sound, macOS asks whether AudioVis may record system audio (or use the microphone, for an input). Without that permission the picture stays black. It can be changed later in System Settings > Privacy & Security.
+- **Output devices that also have inputs**, such as some USB audio interfaces, are captured from their input rather than from what they are playing.
+- It draws with Metal rather than Vulkan, and settings are kept in `~/Library/Application Support/AudioVis/`.
 
 ### If the picture stays black
 
@@ -97,7 +115,7 @@ Rest the pointer on any setting to see a description of what it does; the "Descr
 | `--midi-port NAME` | Use a specific MIDI input port |
 | `--set key=value` | Set any slider by its key, e.g. `--set bass_amount=2` |
 
-The app uses Vulkan on the high-performance GPU by default. To override this, set the `WGPU_BACKEND` and `WGPU_POWER_PREF` environment variables.
+The app uses Vulkan (Metal on macOS) on the high-performance GPU by default. To override this, set the `WGPU_BACKEND` and `WGPU_POWER_PREF` environment variables.
 
 <!-- source-only -->
 For development there is a self-test: `--selftest file.png --seconds N` runs on default settings for N seconds, saves a screenshot, prints frame timings and exits. `--show-hint key` displays that slider's description in the screenshot.
@@ -192,7 +210,7 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 
 | Setting | Default |
 |---|---|
-| Audio source | Default Windows output device |
+| Audio source | Default output device |
 | Window | 1280 x 720, panel shown |
 | Vsync | on (a tick box at the top of the panel; a change applies when the app is restarted) |
 | Descriptions on hover | on |
@@ -243,13 +261,14 @@ Settings are saved automatically to `%APPDATA%\AudioVis\settings.json`, includin
 ```
 visualiser/        Rust app (eframe/egui UI, wgpu rendering)
   src/main.rs      app, settings panel, 3D camera, command-line options
-  src/audio.rs     WASAPI capture (system output, named devices, inputs)
+  src/audio.rs     audio capture (system output, named devices, inputs)
   src/analysis.rs  variable-Q spectrum, note sharpening and bass meter
   src/params.rs    every adjustable setting, its description, and the palettes
   src/midi.rs      MIDI controller input and learn
   src/render.rs    GPU pipelines (picture, 3D map, raindrops)
   src/shader.wgsl  cross and circle views, 3D, rain, colour mapping
 installer/         Inno Setup script and build script for the Windows installer
+installer/macos/   build script and Info.plist for the macOS app and disk image
 preview/           Python offline prototypes that render mp4 previews
 ```
 

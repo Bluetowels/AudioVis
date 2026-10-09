@@ -1,0 +1,82 @@
+# Builds the macOS app and disk image, checks that it starts, and keeps both
+# as downloadable artifacts. macOS runners use Actions minutes ten times as
+# fast as Linux ones on a private repository, so this only runs when the app
+# or its packaging changes, on a version tag, or when started by hand.
+name: macOS build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, macos-port]
+    tags: ['v*']
+    paths:
+      - 'visualiser/**'
+      - 'installer/macos/**'
+      - '.github/workflows/macos.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust targets
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: visualiser
+
+      - name: Build app and disk image
+        run: bash installer/macos/build.sh
+
+      - name: Check the bundle
+        run: |
+          app=installer/output/AudioVis.app
+          lipo -archs "$app/Contents/MacOS/audiovis"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --verify --strict --verbose=2 "$app"
+          "$app/Contents/MacOS/audiovis" --list-devices
+
+      # Runs the app on the test signal, saves a screenshot and prints frame
+      # timings. A runner's virtual display and GPU are not a real Mac, so a
+      # failure here is reported without failing the build.
+      - name: Self-test
+        continue-on-error: true
+        run: |
+          installer/output/AudioVis.app/Contents/MacOS/audiovis --test-signal --selftest selftest.png --seconds 6 > selftest.txt 2>&1 &
+          pid=$!
+          for _ in $(seq 90); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid"
+            cat selftest.txt
+            echo "::warning::Self-test did not finish within 90 seconds"
+            exit 1
+          fi
+          status=0
+          wait "$pid" || status=$?
+          cat selftest.txt
+          [ "$status" = 0 ] && [ -f selftest.png ] || { echo "::warning::Self-test failed (exit $status)"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AudioVis-macOS
+          path: |
+            installer/output/*.dmg
+            selftest.png
+            selftest.txt
+          if-no-files-found: error

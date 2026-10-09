@@ -53,10 +53,42 @@ struct Settings {
     show_surface: bool,
 }
 
+#[cfg(windows)]
 fn config_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     base.join("AudioVis")
 }
+
+#[cfg(target_os = "macos")]
+fn config_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    home.join("Library/Application Support/AudioVis")
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn config_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("AudioVis")
+}
+
+/// The graphics API the app asks for, and its name for error messages.
+#[cfg(windows)]
+const GRAPHICS: (Option<&str>, &str) = (Some("vulkan"), "Vulkan");
+#[cfg(target_os = "macos")]
+const GRAPHICS: (Option<&str>, &str) = (Some("metal"), "Metal");
+#[cfg(not(any(windows, target_os = "macos")))]
+const GRAPHICS: (Option<&str>, &str) = (None, "Vulkan or OpenGL");
+
+/// What the operating system is called in the panel.
+#[cfg(windows)]
+const SYSTEM_NAME: &str = "Windows";
+#[cfg(target_os = "macos")]
+const SYSTEM_NAME: &str = "macOS";
+#[cfg(not(any(windows, target_os = "macos")))]
+const SYSTEM_NAME: &str = "system";
 
 fn preset_names() -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(config_dir().join("presets"))
@@ -155,6 +187,7 @@ fn main() -> eframe::Result {
     // Started from a terminal, print there (--list-devices, --selftest),
     // unless the output is already going to a file or a pipe.
     // SAFETY: plain Win32 calls; attaching fails harmlessly when there is no terminal.
+    #[cfg(windows)]
     unsafe {
         if GetStdHandle(STD_OUTPUT_HANDLE).is_null() {
             AttachConsole(ATTACH_PARENT_PROCESS);
@@ -169,10 +202,10 @@ fn main() -> eframe::Result {
 {info}"));
     }));
     let options = parse_options();
-    // The app is built for Vulkan on a discrete GPU.
-    if std::env::var_os("WGPU_BACKEND").is_none() {
+    // The app is built for Vulkan on a discrete GPU on Windows, and Metal on macOS.
+    if let (Some(backend), None) = (GRAPHICS.0, std::env::var_os("WGPU_BACKEND")) {
         // SAFETY: nothing else is running yet.
-        unsafe { std::env::set_var("WGPU_BACKEND", "vulkan") };
+        unsafe { std::env::set_var("WGPU_BACKEND", backend) };
     }
     if std::env::var_os("WGPU_POWER_PREF").is_none() {
         unsafe { std::env::set_var("WGPU_POWER_PREF", "high") };
@@ -213,20 +246,25 @@ fn main() -> eframe::Result {
     if let Err(e) = &result {
         // Started from a shortcut there is no console to read the error in.
         message_box(&format!(
-            "AudioVis couldn't start the graphics card. It needs a GPU with Vulkan support and an up-to-date driver.\n\n{e}"
+            "AudioVis couldn't start the graphics card. It needs a GPU with {} support and an up-to-date driver.\n\n{e}",
+            GRAPHICS.1
         ));
     }
     result
 }
 
+#[cfg(windows)]
 #[link(name = "user32")]
 unsafe extern "system" {
     fn MessageBoxW(window: *mut std::ffi::c_void, text: *const u16, caption: *const u16, kind: u32) -> i32;
 }
 
+#[cfg(windows)]
 const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+#[cfg(windows)]
 const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
 
+#[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn AttachConsole(process: u32) -> i32;
@@ -234,6 +272,7 @@ unsafe extern "system" {
 }
 
 /// Show an error in a standard Windows message box and wait for OK.
+#[cfg(windows)]
 fn message_box(text: &str) {
     const MB_ICONERROR: u32 = 0x10;
     let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
@@ -241,6 +280,22 @@ fn message_box(text: &str) {
     // SAFETY: both strings are NUL-terminated and outlive the call.
     unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), MB_ICONERROR) };
 }
+
+/// Show an error in a standard macOS alert and wait for OK.
+#[cfg(target_os = "macos")]
+fn message_box(text: &str) {
+    // The text is passed as an argument, so nothing in it is read as script.
+    let script = ["on run argv", r#"display alert "AudioVis" message (item 1 of argv) as critical"#, "end run"];
+    let _ = std::process::Command::new("/usr/bin/osascript")
+        .args(script.into_iter().flat_map(|line| ["-e", line]))
+        .arg("--")
+        .arg(text)
+        .status();
+}
+
+/// The error has already gone to the terminal, which is all there is here.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn message_box(_text: &str) {}
 
 /// The description shown beside whichever control the pointer is resting on.
 #[derive(Default)]
@@ -999,7 +1054,7 @@ impl App {
                 }
                 ui.selectable_value(&mut chosen, Source::TestSignal, Source::TestSignal.label());
             });
-            self.describe(&source_box.response, "Where the sound comes from. Default output device: whatever is sent to the Windows default device. Chosen output devices: tick one or more devices and their sound is added together. Input: a microphone or line input. Test signal: a built-in kick, chord and hi-hat for checking the picture.");
+            self.describe(&source_box.response, &format!("Where the sound comes from. Default output device: whatever is sent to the {SYSTEM_NAME} default device. Chosen output devices: tick one or more devices and their sound is added together. Input: a microphone or line input. Test signal: a built-in kick, chord and hi-hat for checking the picture."));
             if let Source::Outputs(names) = &mut chosen {
                 ui.small("Captures what apps send to each ticked device, added together:");
                 egui::ScrollArea::vertical().id_salt("outputs").max_height(140.0).show(ui, |ui| {

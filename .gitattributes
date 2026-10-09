@@ -1,0 +1,2 @@
+# Shell scripts run on macOS, which needs Unix line endings whatever the checkout.
+*.sh text eol=lf

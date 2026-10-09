@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **macOS (experimental).** The app builds for macOS 14.6 or later as a universal app in a disk image. It draws with Metal and captures system audio with a Core Audio tap. Windows behaviour is unchanged.
+
 ## 0.2.0 (2026-10-09)
 
 The first release.

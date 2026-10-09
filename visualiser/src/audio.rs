@@ -1,5 +1,6 @@
 //! Audio capture into ring buffers: what one or more output devices are
-//! playing (WASAPI loopback), an input device, or a built-in test signal.
+//! playing (WASAPI loopback on Windows, a Core Audio tap on macOS 14.6 or
+//! later), an input device, or a built-in test signal.
 //! Only the front left and right channels of a device are used.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -73,7 +74,7 @@ impl Ring {
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub enum Source {
-    /// Whatever the default Windows output device is playing.
+    /// Whatever the system's default output device is playing.
     SystemOutput,
     /// What the named output devices are playing, added together.
     Outputs(Vec<String>),
