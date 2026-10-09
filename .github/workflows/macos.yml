@@ -1,18 +1,11 @@
 # Builds the macOS app and disk image, checks that it starts, and keeps both
 # as downloadable artifacts. macOS runners use Actions minutes ten times as
-# fast as Linux ones on a private repository, so this only runs when the app
-# or its packaging changes, on a version tag, or when started by hand.
+# fast as Linux ones on a private repository, so this only runs when started
+# by hand (Actions > macOS build > Run workflow).
 name: macOS build
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, macos-port]
-    tags: ['v*']
-    paths:
-      - 'visualiser/**'
-      - 'installer/macos/**'
-      - '.github/workflows/macos.yml'
 
 permissions:
   contents: read
