@@ -1189,7 +1189,7 @@ impl App {
 
     /// Draw laid-out lyrics with every letter moved to where `place` puts it
     /// (given its position in the layout) and faded by `opacity`. With
-    /// `words`, the word being sung comes forward: it swells, lifts, takes
+    /// `words` (lyrics that time every word), the word being sung comes forward: it swells, lifts, takes
     /// the bright colour and glows, then settles back as the next one starts.
     #[allow(clippy::too_many_arguments)]
     fn lyric_text(
@@ -1244,7 +1244,8 @@ impl App {
                 });
                 let seen = opacity(middle) * dim;
                 let rgb: [f32; 3] = std::array::from_fn(|i| mid[i] + (hot[i] - mid[i]) * forward);
-                let alpha = quiet * (0.75 + 0.25 * sung);
+                // In a line with word times, the words still to come hang back a little.
+                let alpha = quiet * if word.is_some() { 0.75 + 0.25 * sung } else { 1.0 };
                 let text = colour(rgb, (alpha + (1.0 - alpha) * forward) * seen);
                 let swell = 1.0 + forward * (0.05 + 0.12 * kick + 0.04 * bass);
                 for v in letter {
@@ -1442,11 +1443,12 @@ impl App {
         let next_start = lines.get(current + 1).map_or(f64::MAX, |next| next.start);
         let words = lyric_words(&galley, line, next_start);
 
-        // How far the line has moved past the top: each word reaches the top
-        // as it is sung, then the next line waits there for its turn.
+        // How far the line has moved past the top. It crosses in about the
+        // time it takes to sing, then the next line waits there for its turn.
+        // With word timings, each word reaches the top as it is sung.
         let mut marks = vec![(line.start, 0.0)];
         marks.extend(words.iter().map(|w| (w.start, w.left)));
-        let end = words.last().map_or(line.start + 2.0, |w| w.end);
+        let end = words.last().map_or(line.start + (0.15 * line.text.chars().count() as f64).max(2.0), |w| w.end);
         marks.push((end.min(next_start), whole + gap));
         let mut moved = whole + gap;
         for pair in marks.windows(2) {
@@ -1942,11 +1944,11 @@ struct LyricWord {
     right: f32,
 }
 
-/// The words of a laid-out line and when each is sung. Lyrics that carry a
-/// time for every word use those. Most only time whole lines, and then the
-/// time the line takes is shared out between its words by their width, which
-/// follows the singing closely enough for the eye.
+/// The words of a laid-out line and when each is sung, for lyrics that carry
+/// a time for every word. Most only time whole lines, and for those there
+/// are no words to pick out: guessing the times does not stay with the singer.
 fn lyric_words(galley: &egui::Galley, line: &lyrics::Line, next_start: f64) -> Vec<LyricWord> {
+    let Some((last, _)) = line.words.last() else { return Vec::new() };
     // Each word's row, left and right edges, and where its first letter is in the text.
     let mut found: Vec<(usize, f32, f32, usize)> = Vec::new();
     let mut letter = 0;
@@ -1967,33 +1969,15 @@ fn lyric_words(galley: &egui::Galley, line: &lyrics::Line, next_start: f64) -> V
         }
     }
 
-    let (starts, end): (Vec<f64>, f64) = if let Some((last, _)) = line.words.last() {
-        // The letter each timed piece ends before, and when the piece starts.
-        let mut pieces = Vec::new();
-        let mut letters = 0;
-        for (start, piece) in &line.words {
-            letters += piece.chars().count();
-            pieces.push((letters, *start));
-        }
-        let starts = found.iter().map(|word| pieces.iter().find(|(end, _)| word.3 < *end).map_or(*last, |(_, start)| *start)).collect();
-        (starts, (last + 1.0).min(next_start))
-    } else {
-        // A line is rarely sung right up to the next one, or slower than this.
-        let natural = 0.6 + 0.45 * found.len() as f64 + 0.06 * line.text.chars().count() as f64;
-        let sung = natural.min(0.92 * (next_start - line.start));
-        let space = 0.3 * galley.size().y;
-        let total: f32 = found.iter().map(|word| word.2 - word.1 + space).sum();
-        let mut before = 0.0;
-        let starts = found
-            .iter()
-            .map(|word| {
-                let start = line.start + sung * (before / total.max(1.0)) as f64;
-                before += word.2 - word.1 + space;
-                start
-            })
-            .collect();
-        (starts, line.start + sung)
-    };
+    // The letter each timed piece ends before, and when the piece starts.
+    let mut pieces = Vec::new();
+    let mut letters = 0;
+    for (start, piece) in &line.words {
+        letters += piece.chars().count();
+        pieces.push((letters, *start));
+    }
+    let starts: Vec<f64> = found.iter().map(|word| pieces.iter().find(|(end, _)| word.3 < *end).map_or(*last, |(_, start)| *start)).collect();
+    let end = (last + 1.0).min(next_start);
     found
         .iter()
         .enumerate()
