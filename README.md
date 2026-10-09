@@ -2,7 +2,7 @@
 
 A full-screen, GPU-driven audio visualiser for Windows. It's built to respond as quickly as a fast spectrum analyser, and to show the shape of the music rather than just pulsing to the beat.
 
-Every pixel stands for a pair of frequencies, and its colour shows how loud those two frequencies are together. Silence is black. Bass hits flare across the whole picture.
+Every pixel stands for a pair of frequencies, and its colour shows how loud those two frequencies are together. Silence is black. Bass hits send a pulse out from the centre in a contrasting colour.
 
 ## What it does
 
@@ -11,18 +11,19 @@ Every pixel stands for a pair of frequencies, and its colour shows how loud thos
 - **Two views:**
   - **Cross**: x and y are both frequency, and a pixel lights when both of its frequencies are sounding. It can be mirrored into four quadrants and flipped on either axis.
   - **Circle**: frequency runs outwards as rings, with an optional angular pattern.
-- **Bass effect.** A fast envelope (23 ms) of everything below the bass cutoff drives a pulse from the centre, a fill of the dark areas, or a whole-picture flare.
+- **Bass effect.** A fast envelope (23 ms) of everything below the bass cutoff drives a pulse from the centre or a fill of the dark areas, and optionally a whole-picture flare.
+- **Note controls.** Low notes can be sharpened to thin lines so a bass line is easy to follow, and the balance between speed and pitch detail is adjustable.
 - **Stereo (optional).** Each sound can lean towards the side it's panned to. Wide, out-of-phase sound can be drawn in its own "surround" colour.
-- **Experimental 3D.** Tilt the camera so loudness stands up as height, with orbit, a free-flying camera and a "storm" effect.
+- **Experimental 3D.** Tilt the camera so loudness stands up as height, with orbit, a camera that flies around or into the picture, and a storm of raindrops.
 - **Palettes.** Ten built-in palettes: Ember, Ice, Aurora, Neon, Sunset, Mono, Rainbow, Zigzag, Candy and Contour. Any of them can be reversed or banded.
-- **MIDI control.** It's mapped out of the box to a Korg nanoKONTROL2, and any control can be re-assigned with MIDI learn.
+- **MIDI control.** It's mapped out of the box to a Korg nanoKONTROL2, and any slider can be re-assigned with MIDI learn.
 - **Presets.** Save and load named snapshots of every slider and switch.
 
 ## Requirements
 
-- Windows 10 or 11
+- Windows 10 or 11. Audio capture uses WASAPI loopback, so other systems aren't supported.
 - A GPU with Vulkan support (developed on an AMD Radeon RX 7900 XTX)
-- To build from source: [Rust](https://rustup.rs) (stable, edition 2024) and the Visual Studio C++ Build Tools
+- To build from source: [Rust](https://rustup.rs) (stable, edition 2024) and the Visual Studio C++ Build Tools with a Windows SDK
 
 ## Building
 
@@ -31,7 +32,15 @@ cd visualiser
 cargo build --release
 ```
 
-The executable ends up in `target\release\audiovis.exe`, or in your `CARGO_TARGET_DIR` if you've set one.
+The executable ends up in `target\release\audiovis.exe`, or in your `CARGO_TARGET_DIR` if you've set one. If the project folder is synced (OneDrive, for example), set `CARGO_TARGET_DIR` to somewhere outside it.
+
+### Installer
+
+```powershell
+installer\build.ps1
+```
+
+This builds the release executable and packages it as `installer\output\AudioVis-Setup-<version>.exe`. It needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`), and on first run it downloads Microsoft's Visual C++ redistributable into `installer\redist\` to bundle with the setup. Neither folder is committed.
 
 ## Running
 
@@ -41,6 +50,12 @@ cargo run --release
 
 By default it captures the default Windows output device. Play some music and it reacts.
 
+### If the picture stays black
+
+- **The music may be going to a different device.** With Voicemeeter or similar routing, programs often play to a device other than the Windows default. In the panel, set Audio source to "Chosen output devices" and tick the device carrying the music. The meters under the list show which devices are receiving sound. Several devices can be ticked and are added together; they must share a sample rate.
+- **Only the first two channels of a device are used** (front left and right). A surround upmix further down the chain never reaches the visualiser.
+- **Check the level settings.** With auto-gain off, the Reference level has to be near the level of the music.
+
 ### Keyboard and mouse
 
 | Key | Action |
@@ -48,10 +63,13 @@ By default it captures the default Windows output device. Play some music and it
 | Tab or F1 | Show or hide the settings panel |
 | F11 | Toggle fullscreen (Esc leaves fullscreen) |
 | F2 | Show or hide the FPS counter |
-| F3 | Show or hide the frame-time graph |
+| F3 | Show or hide the FPS graph |
+| F4 | Show or hide the picture of the controller |
 | Right-click the picture | Palette menu |
+| Double-click a slider | Return it to its default (shown by a small mark on the slider) |
+| Right-click a slider | MIDI learn, clear the binding, or reset to default |
 
-Hover over any setting in the panel to see a description of what it does.
+Rest the pointer on any setting to see a description of what it does; the "Descriptions on hover" button at the top of the panel turns these off. Click a section heading to fold that section away.
 
 ### Command-line options
 
@@ -65,37 +83,161 @@ Hover over any setting in the panel to see a description of what it does.
 | `--hide-panel` | Start with the settings panel hidden |
 | `--stereo` | Start with stereo on |
 | `--circle` | Start in the circle view |
-| `--no-vsync` | Uncap the frame rate |
+| `--underlay` | Start with the bass drawn as a fill of the dark areas |
+| `--controller` | Start with the picture of the controller showing |
+| `--fps` | Start with the FPS counter and graph showing (first run or self-test only) |
+| `--no-vsync` | Uncap the frame rate for this run |
 | `--midi-port NAME` | Use a specific MIDI input port |
 | `--set key=value` | Set any slider by its key, e.g. `--set bass_amount=2` |
 
 The app uses Vulkan on the high-performance GPU by default. To override this, set the `WGPU_BACKEND` and `WGPU_POWER_PREF` environment variables.
 
+For development there is a self-test: `--selftest file.png --seconds N` runs on default settings for N seconds, saves a screenshot, prints frame timings and exits. `--show-hint key` displays that slider's description in the screenshot.
+
+## Settings
+
+Defaults are what a first run or "Reset everything to defaults" gives.
+
+### Level
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Auto-gain | on | | Full brightness follows the loudest part of the music |
+| Reference level | -12 dBFS | -60 to 12 | Level shown at full brightness when auto-gain is off |
+| Auto-gain speed | 4 dB/s | 0.5 to 40 | How quickly the picture turns back up after a loud passage |
+| Range | 40 dB | 20 to 90 | How far below full brightness still shows |
+| Slope | 0 dB/oct | 0 to 9 | Treble lift; 0 follows the real energy, which is mostly bass, and 4.5 makes a typical mix look level |
+| Contrast curve | 1.2 | 0.4 to 3 | How colour climbs from quiet to loud |
+| Master brightness | 1.0 | 0 to 2 | Overall brightness |
+
+### Notes and timing
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Bass note sharpening | 0.3 | 0 to 1 | Redraws each smeared low note as a thin line at its pitch |
+| Bass window | 200 ms | 100 to 1000 | Audio the lowest notes are measured over; longer is sharper in pitch but slower |
+| Note sharpening (whole spectrum) | 0.2 | 0 to 1 | Thins every note to a fine line; best on clean, pitched music |
+| Speed vs pitch detail | 0.25 | 0.25 to 1 | Lower reacts faster and spreads notes across more bins |
+
+### Bass boost
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Bass boost | on | | Bass hits drive an extra effect |
+| Bass boost amount | 0.5 | 0 to 2 | Strength; above 1, big hits flood the frame |
+| Bass cutoff | 150 Hz | 40 to 400 | Sound below this drives the effect |
+| Bass release | 60 ms | 10 to 500 | How long the effect takes to die away |
+| Bass glow | 0.3 | 0 to 1 | How far the pulse spreads, or how dim an area can be and still fill |
+| Style | Pulse from the middle | or Fill dark areas | A glowing disc over the picture, or colour underneath it |
+| Bass also flares the whole frame | off | | Bass hits also brighten the whole picture |
+| Custom bass colour | off | | Off uses a colour chosen to contrast with the palette |
+
+### Picture
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Shape | Cross | Cross, Circle | The two views |
+| Mirror | Four quadrants | Off, Four quadrants, Left / right, Top / bottom | Cross view only |
+| Flip x, Flip y | off | | Unticked, bass is in the middle; ticked puts treble there |
+| Combine blend | 0 | 0 to 1 | 0 needs both of a pixel's frequencies; 1 lets one frequency light its row and column |
+| Decay / persistence | 0 ms | 0 to 600 | How long a sound lingers after it stops |
+| Smoothing between bins | 1.5 | 0 to 6 bins | Blurs neighbouring frequencies together |
+| Lowest frequency | 27.5 Hz | up to 8 octaves higher | Bottom of the displayed range |
+| Highest frequency | about 14 kHz | down to 55 Hz | Top of the displayed range |
+| Circle: angular pattern | 0.5 | 0 to 1 | Runs a second frequency round the ring, like the cross bent into a circle |
+
+### Stereo
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Stereo | on | | Draws each sound towards the side it is panned to |
+| Stereo emphasis | 1.0 | 0 to 1 | How strongly sounds are pushed to their side |
+| Surround colour amount | 1.0 | 0 to 1 | How strongly out-of-phase sound takes the surround colour |
+| Custom surround colour | on, red (255, 0, 0) | | Off uses the palette's own surround colour |
+
+Stereo position is averaged over about 150 ms and two semitones, so it's steadier than the rest of the picture and slightly slower.
+
+### 3D (experimental)
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| 3D tilt | 0 degrees | 0 to 70 | 0 is the flat picture; higher tips the camera back and loudness becomes height |
+| 3D height | 0.6 | 0 to 1 | How tall the brightest parts stand |
+| 3D orbit speed | 0 deg/s | -30 to 30 | Circles the camera round the centre |
+| 3D flight speed | 0 | 0 to 2 | Above 0, the camera flies a wandering path; takes over from tilt and orbit |
+| 3D flight depth | 0 | 0 to 1 | 0 flies above and around; 1 flies down among the peaks |
+| 3D flight look ahead | 0 | 0 to 1 | 0 looks at the centre; 1 looks along the flight path |
+| 3D storm | 0 | 0 to 1 | Raindrops that fall, splash on the surface and evaporate |
+
+The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low flights over a dense picture can drop below the display's refresh rate.
+
+### Colour
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Palette | Ember | ten palettes | Colours from quiet to loud |
+| Colour banding | 0 | 0 to 1 | 0 blends smoothly; 1 gives hard-edged bands |
+| Reverse palette | off | | Swaps the palette end for end |
+
+### App
+
+| Setting | Default |
+|---|---|
+| Audio source | Default Windows output device |
+| Window | 1280 x 720, panel shown |
+| Vsync | on (a tick box at the top of the panel; a change applies when the app is restarted) |
+| Descriptions on hover | on |
+| FPS counter, FPS graph | off |
+
 ## MIDI (Korg nanoKONTROL2)
 
-On the controller's factory mapping:
+The app connects to the first MIDI input whose name contains "nanoKONTROL2". On the controller's factory mapping:
 
-- **Faders 1 to 8:** slope, range, reference level, bass amount, decay, combine blend, lowest frequency, master brightness
-- **Knobs 1 to 8:** bass cutoff, bass release, auto-gain speed, bass glow, contrast, smoothing, highest frequency, palette
-- **Buttons:** switches such as mirror, flips, stereo and reverse palette (each switch's description in the panel names its button)
+| Strip | Fader | Knob |
+|---|---|---|
+| 1 | Range | Contrast curve |
+| 2 | Note sharpening (whole spectrum) | Speed vs pitch detail |
+| 3 | Bass boost amount | Bass glow |
+| 4 | Decay / persistence | Smoothing between bins |
+| 5 | Combine blend | Highest frequency |
+| 6 | Palette | Colour banding |
+| 7 | 3D tilt | 3D height |
+| 8 | 3D orbit speed | 3D flight speed |
 
-To re-assign a control, right-click any slider in the panel for MIDI learn. "Restore default controller mapping" puts the factory assignments back. After you load a preset, a fader takes over once you move it to the slider's position.
+- **S buttons 1 to 8:** flip x, flip y, mirror mode, stereo, auto-gain, bass boost, reverse palette, show or hide the panel
+- **R button 1:** switch between cross and circle
+- **Track arrows:** previous and next palette
 
-## Settings and presets
+**Controller picture.** F4, or the "Controller" button at the top of the panel, draws the nanoKONTROL2 across the bottom of the screen with every knob, fader and button labelled with what it does. White marks show where the hardware is and blue marks show where the setting is; lit buttons are switches that are on. Right-click any control on the picture to give it a different setting or job, or to unassign it.
 
-Settings are saved automatically to `%APPDATA%\AudioVis\settings.json`, and presets are saved to `%APPDATA%\AudioVis\presets\`. Neither is stored in this repository.
+Every other slider has no default control. To assign one, right-click the slider and choose MIDI learn, then move a fader or knob, or right-click a control on the controller picture. "Restore default controller mapping" puts the assignments above back.
+
+Faders glide between steps, and frequency and time controls move logarithmically. After you load a preset or move a slider with the mouse, a fader takes over once you move it to the slider's position. Buttons are treated as toggles: every message from a button counts as one press.
+
+## Presets and saved settings
+
+Settings are saved automatically to `%APPDATA%\AudioVis\settings.json`, including the audio source, the controller mapping and which panel sections are folded. Presets are saved to `%APPDATA%\AudioVis\presets\` and hold every slider and switch, but not the audio source or controller mapping. Neither is stored in this repository.
+
+## Troubleshooting
+
+- **A message box says it couldn't start the graphics card.** The app needs a GPU with Vulkan support and a current driver.
+- **Nothing appears in a terminal.** The release build has no console window of its own. Started from a terminal it prints there (`--list-devices`, the self-test); started from a shortcut, errors are shown in a message box.
+- **"Access is denied" when running a freshly built exe.** Windows Defender's attack surface reduction rules can block new unsigned programs. Add an exclusion for the build output folder.
+- **The build fails with "failed to remove file audiovis.exe".** The app is still running; close it and build again.
+- **Tearing or stutter.** Check that nothing in the graphics driver is forcing vsync off, and use the FPS graph (F3) to see whether frames are being dropped.
 
 ## Project layout
 
 ```
 visualiser/        Rust app (eframe/egui UI, wgpu rendering)
-  src/main.rs      app, settings panel, command-line options
+  src/main.rs      app, settings panel, 3D camera, command-line options
   src/audio.rs     WASAPI capture (system output, named devices, inputs)
-  src/analysis.rs  variable-Q spectrum and bass meter
-  src/params.rs    every adjustable setting and the palettes
+  src/analysis.rs  variable-Q spectrum, note sharpening and bass meter
+  src/params.rs    every adjustable setting, its description, and the palettes
   src/midi.rs      MIDI controller input and learn
-  src/render.rs    GPU pipeline
-  src/shader.wgsl  cross and circle views, 3D, colour mapping
+  src/render.rs    GPU pipelines (picture, 3D map, raindrops)
+  src/shader.wgsl  cross and circle views, 3D, rain, colour mapping
+installer/         Inno Setup script and build script for the Windows installer
 preview/           Python offline prototypes that render mp4 previews
 ```
 

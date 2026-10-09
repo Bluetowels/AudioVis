@@ -9,6 +9,7 @@ mod audio;
 mod midi;
 mod params;
 mod render;
+mod surface;
 
 use analysis::{BINS_PER_OCTAVE, BassMeter, F_MIN, N_BINS, Vqt};
 use audio::{Capture, Channel, Source};
@@ -46,6 +47,10 @@ struct Settings {
     /// Names of the settings sections that are folded away.
     #[serde(default)]
     collapsed: std::collections::BTreeSet<String>,
+    #[serde(default = "params::yes")]
+    vsync: bool,
+    #[serde(default)]
+    show_surface: bool,
 }
 
 fn config_dir() -> PathBuf {
@@ -75,6 +80,8 @@ struct Options {
     circle: bool,
     /// Self-test: show the FPS counter and graph.
     fps: bool,
+    /// Start with the picture of the controller showing.
+    surface: bool,
     stereo: bool,
     /// Self-test: draw bass as a fill of the dark areas.
     underlay: bool,
@@ -95,6 +102,7 @@ fn parse_options() -> Options {
         show_panel: true,
         circle: false,
         fps: false,
+        surface: false,
         stereo: false,
         underlay: false,
         overrides: Vec::new(),
@@ -122,6 +130,7 @@ fn parse_options() -> Options {
             "--no-vsync" => o.vsync = false,
             "--circle" => o.circle = true,
             "--fps" => o.fps = true,
+            "--controller" => o.surface = true,
             "--stereo" => o.stereo = true,
             "--underlay" => o.underlay = true,
             "--show-hint" => o.demo_hint = args.next(),
@@ -176,7 +185,14 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
-    native.wgpu_options.surface.present_mode = if options.vsync {
+    // Vsync is fixed when the window is created, so the saved choice is read here.
+    let saved_vsync = std::fs::read_to_string(config_dir().join("settings.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|v| v.get("vsync").and_then(|v| v.as_bool()))
+        .unwrap_or(true);
+    let vsync_active = options.vsync && (saved_vsync || options.selftest.is_some());
+    native.wgpu_options.surface.present_mode = if vsync_active {
         // Plain Fifo, not AutoVsync: that prefers a mode which shows a late
         // frame immediately, tearing the picture whenever a frame runs over.
         eframe::egui_wgpu::wgpu::PresentMode::Fifo
@@ -191,7 +207,7 @@ fn main() -> eframe::Result {
             if cc.wgpu_render_state.is_none() {
                 return Err("the wgpu renderer is not available".into());
             }
-            Ok(Box::new(App::new(cc, options)))
+            Ok(Box::new(App::new(cc, options, saved_vsync, vsync_active)))
         }),
     );
     if let Err(e) = &result {
@@ -294,6 +310,11 @@ struct App {
     show_fps: bool,
     show_fps_graph: bool,
     collapsed: std::collections::BTreeSet<String>,
+    /// Whether the picture of the controller is showing.
+    show_surface: bool,
+    /// Vsync as chosen in the panel, and as this run was started with.
+    vsync: bool,
+    vsync_active: bool,
     /// Seconds of 3D flight flown so far, scaled by the flight speed.
     flight_time: f32,
     /// Recent frame times in ms, newest last, for the graph.
@@ -311,7 +332,7 @@ struct App {
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, options: Options, vsync: bool, vsync_active: bool) -> Self {
         let render_state = cc.wgpu_render_state.as_ref().expect("the wgpu renderer is required");
         render::init(render_state);
         let info = render_state.adapter.get_info();
@@ -320,6 +341,7 @@ impl App {
         let saved: Option<Settings> = std::fs::read_to_string(config_dir().join("settings.json"))
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok());
+        let show_surface = options.surface || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.show_surface));
         let (mut params, mut bindings, saved_source, show_hints, show_fps, show_fps_graph, collapsed) = match saved {
             // A self-test always runs on defaults so results are comparable.
             Some(s) if options.selftest.is_none() => {
@@ -389,6 +411,9 @@ impl App {
             show_fps,
             show_fps_graph,
             collapsed,
+            show_surface,
+            vsync,
+            vsync_active,
             flight_time: 0.0,
             frame_history: std::collections::VecDeque::with_capacity(FPS_HISTORY),
             preset_name: String::new(),
@@ -417,6 +442,8 @@ impl App {
             show_fps: self.show_fps,
             show_fps_graph: self.show_fps_graph,
             collapsed: self.collapsed.clone(),
+            vsync: self.vsync,
+            show_surface: self.show_surface,
         };
         let dir = config_dir();
         if std::fs::create_dir_all(&dir).is_ok() {
@@ -893,13 +920,26 @@ impl App {
                 _ => format!(" On the controller: control {cc}."),
             };
         }
-        help += " Right-click for MIDI learn or to reset.";
+        help += " The small mark on the slider is its default; double-click the slider to go back to it. Right-click for MIDI learn.";
+
+        // The slider's track is the left part of the widget; the value box follows it.
+        let track = egui::Rect::from_min_size(response.rect.min, egui::vec2(ui.spacing().slider_width, response.rect.height()));
+        let inset = track.height() / 2.5;       // the handle stops this far short of each end
+        let x = track.left() + inset + d.to_norm(d.default) * (track.width() - 2.0 * inset);
+        let mark = egui::Stroke::new(1.5, ui.visuals().strong_text_color().gamma_multiply(0.6));
+        ui.painter().vline(x, track.top()..=track.top() + 4.0, mark);
+        ui.painter().vline(x, track.bottom() - 4.0..=track.bottom(), mark);
+        let on_track = response.interact_pointer_pos().or(response.hover_pos()).is_some_and(|p| track.contains(p));
+        let reset = response.double_clicked() && on_track;
         self.describe(&heading, &help);
         self.describe(&response, &help);
         if self.options.demo_hint.as_deref() == Some(d.key) {
             self.hint.hovered = Some((response.id, help.clone(), response.rect));
         }
-        if response.changed() {
+        if reset {
+            self.params.set(id, d.default);
+            self.controller.release(&self.bindings, id);
+        } else if response.changed() {
             self.params.set(id, value);
             self.controller.release(&self.bindings, id);
         }
@@ -929,9 +969,14 @@ impl App {
             ui.horizontal(|ui| {
                 let r = ui.toggle_value(&mut self.show_fps, "FPS counter");
                 self.describe(&r, "Show the frame rate and frame time in the top-left corner of the picture. Also on F2.");
+                let r = ui.toggle_value(&mut self.show_surface, "Controller");
+                self.describe(&r, "Show a picture of the nanoKONTROL2 across the bottom of the screen, with every knob, fader and button labelled with what it does. It moves with the hardware, and right-clicking a control on it reassigns that control. Also on F4.");
                 let r = ui.toggle_value(&mut self.show_fps_graph, "FPS graph");
                 self.describe(&r, "Show a graph of the frame rate over the last two seconds in the top-left corner of the picture, so dips and stutters are visible. Also on F3.");
             });
+            let label = if self.vsync != self.vsync_active { "Vsync (applies when the app is restarted)" } else { "Vsync" };
+            let r = ui.checkbox(&mut self.vsync, label);
+            self.describe(&r, "On: each frame waits for the display, so the picture never tears and the frame rate matches the screen. Off: frames are drawn as fast as possible, which can tear. A change takes effect the next time the app starts.");
             ui.small(format!("{:.0} fps   analysis {:.2} ms   {}", 1000.0 / self.frame_ms.max(0.01), self.analysis_ms, self.adapter));
             ui.separator();
 
@@ -1132,7 +1177,7 @@ impl App {
             }
             ui.small("Right-click any slider for MIDI learn. A fader takes over once it reaches the slider's position.");
             let r = ui.button("Restore default controller mapping");
-            self.describe(&r, "Undo any MIDI learn changes. Faders 1 to 8: slope, range, reference level, bass amount, decay, combine blend, lowest frequency, master brightness. Knobs 1 to 8: bass cutoff, bass release, auto-gain speed, bass glow, contrast, smoothing, highest frequency, palette.");
+            self.describe(&r, "Undo any reassignments. Strips 1 to 5, fader then knob: range and contrast; note sharpening and speed vs pitch detail; bass amount and bass glow; decay and smoothing; combine blend and highest frequency; palette and colour banding; 3D tilt and 3D height; 3D orbit speed and 3D flight speed.");
             if r.clicked() {
                 self.bindings = Bindings::default();
                 self.controller.release_all();
@@ -1188,6 +1233,9 @@ impl eframe::App for App {
         if ctx.input(|i| i.key_pressed(egui::Key::F2)) {
             self.show_fps = !self.show_fps;
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::F4)) {
+            self.show_surface = !self.show_surface;
+        }
         if ctx.input(|i| i.key_pressed(egui::Key::F3)) {
             self.show_fps_graph = !self.show_fps_graph;
         }
@@ -1196,7 +1244,7 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
         }
 
-        self.controller.apply(&mut self.params, &mut self.bindings, &mut self.learning, &mut self.show_panel);
+        self.controller.apply(&mut self.params, &mut self.bindings, &mut self.learning, &mut self.show_panel, &mut self.show_surface);
         self.params.glide(dt);
         self.frame_dt = dt.min(0.05);
         self.flight_time += dt * self.params.get(P::Flight);
@@ -1225,6 +1273,19 @@ impl eframe::App for App {
                 render::Frame { uniforms: self.uniforms(gain, glow, rect.width() / rect.height().max(1.0)), levels },
             ));
             self.draw_fps(ui.painter(), rect);
+            if self.show_surface {
+                let hovered = surface::Surface {
+                    params: &mut self.params,
+                    bindings: &mut self.bindings,
+                    controller: &mut self.controller,
+                    show_panel: self.show_panel,
+                    show_surface: true,
+                }
+                .show(ui, rect);
+                if hovered.is_some() {
+                    self.hint.hovered = hovered;
+                }
+            }
             response.context_menu(|ui| {
                 ui.strong("Palette");
                 for (i, palette) in PALETTES.iter().enumerate() {
