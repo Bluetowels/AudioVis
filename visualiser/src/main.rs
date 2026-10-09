@@ -1,6 +1,9 @@
 //! AudioVis: a full-screen audio visualiser. Every pixel is a pair of
 //! frequencies; its colour is how loud they are together. Silence is black.
 
+// Release builds have no console window of their own.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod analysis;
 mod audio;
 mod midi;
@@ -140,6 +143,22 @@ fn parse_options() -> Options {
 }
 
 fn main() -> eframe::Result {
+    // Started from a terminal, print there (--list-devices, --selftest),
+    // unless the output is already going to a file or a pipe.
+    // SAFETY: plain Win32 calls; attaching fails harmlessly when there is no terminal.
+    unsafe {
+        if GetStdHandle(STD_OUTPUT_HANDLE).is_null() {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+    // Without a console a panic would otherwise close the app without a word.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        message_box(&format!("AudioVis hit a problem and has to close.
+
+{info}"));
+    }));
     let options = parse_options();
     // The app is built for Vulkan on a discrete GPU.
     if std::env::var_os("WGPU_BACKEND").is_none() {
@@ -165,7 +184,46 @@ fn main() -> eframe::Result {
         eframe::egui_wgpu::wgpu::PresentMode::AutoNoVsync
     };
 
-    eframe::run_native("AudioVis", native, Box::new(|cc| Ok(Box::new(App::new(cc, options)))))
+    let result = eframe::run_native(
+        "AudioVis",
+        native,
+        Box::new(|cc| {
+            if cc.wgpu_render_state.is_none() {
+                return Err("the wgpu renderer is not available".into());
+            }
+            Ok(Box::new(App::new(cc, options)))
+        }),
+    );
+    if let Err(e) = &result {
+        // Started from a shortcut there is no console to read the error in.
+        message_box(&format!(
+            "AudioVis couldn't start the graphics card. It needs a GPU with Vulkan support and an up-to-date driver.\n\n{e}"
+        ));
+    }
+    result
+}
+
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn MessageBoxW(window: *mut std::ffi::c_void, text: *const u16, caption: *const u16, kind: u32) -> i32;
+}
+
+const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn AttachConsole(process: u32) -> i32;
+    fn GetStdHandle(which: u32) -> *mut std::ffi::c_void;
+}
+
+/// Show an error in a standard Windows message box and wait for OK.
+fn message_box(text: &str) {
+    const MB_ICONERROR: u32 = 0x10;
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (text, caption) = (wide(text), wide("AudioVis"));
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), MB_ICONERROR) };
 }
 
 /// The description shown beside whichever control the pointer is resting on.
