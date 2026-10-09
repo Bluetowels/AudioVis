@@ -1,0 +1,37 @@
+# Rust build output (yours goes to D:\cargo-target, but this catches any stray ones)
+target/
+**/target/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Preview renders and other generated media
+preview/out/
+preview/output/
+*.mp4
+*.mov
+*.webm
+*.gif
+*.png
+!docs/**/*.png
+
+# Music: never commit copyrighted tracks
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.ogg
+
+# Saved local settings, presets and logs from your machine
+*.local.json
+settings.json
+*.log
+
+# Windows / OneDrive / editor clutter
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
