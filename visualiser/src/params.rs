@@ -48,6 +48,9 @@ pub enum P {
     SurfaceAmount,
     StarSpeed,
     StarBass,
+    StarBrightness,
+    StarDensity,
+    StarVariety,
 }
 
 pub struct Def {
@@ -77,7 +80,7 @@ const fn def(
     Def { id, key, name, unit, min, max, default, log, help }
 }
 
-pub const N_PARAMS: usize = 42;
+pub const N_PARAMS: usize = 45;
 pub const N_PALETTES: usize = 28;
 
 pub const DEFS: [Def; N_PARAMS] = [
@@ -118,11 +121,14 @@ pub const DEFS: [Def; N_PARAMS] = [
     def(P::LyricsOffset, "lyrics_offset", "Lyrics sync offset", "ms", -1000.0, 1000.0, 0.0, false, "Moves the lyrics earlier (negative) or later (positive) against the music, in steps of 10 ms, for when they run ahead of or behind what you hear. Remembered separately for each music app, and not stored in presets."),
     def(P::LyricsStrength, "lyrics_strength", "Lyrics strength", "", 0.0, 1.0, 0.4, false, "How much the lyrics stand out from the picture. Low leaves the line faint, with only the word being sung coming forward; high makes every word solid, with a dark edge. The word being sung is always clear."),
     def(P::Bloom, "bloom", "Bloom", "", 0.0, 1.0, 0.3, false, "A soft glow that spreads from the bright parts of the picture, as if seen through a slightly misted lens. 0 is off and leaves every edge crisp."),
-    def(P::BackdropAmount, "backdrop_amount", "Background brightness", "", 0.0, 1.0, 0.4, false, "How bright the background is. It only shows where the picture is dark, and is kept well below the picture so the music still stands out."),
+    def(P::BackdropAmount, "backdrop_amount", "Background brightness", "", 0.0, 1.0, 0.4, false, "How bright the album cover behind the picture is. It only shows where the picture is dark, and is kept well below the picture so the music still stands out."),
     def(P::PaletteDrift, "palette_drift", "Palette drift", "s", 0.0, 120.0, 0.0, false, "Above 0, the colours do not stay still: they blend slowly from the chosen palette to the next of its kind and on through the rest, spending this many seconds on each. Smooth palettes drift through the smooth ones, and the abrupt ones (Rainbow, Zigzag, Candy and the like) through each other. 0 keeps the chosen palette. Colours from the album cover take over while a cover is showing."),
     def(P::SurfaceAmount, "surface_amount", "Surface strength", "", 0.0, 1.0, 1.0, false, "How strongly the 3D surface takes on the chosen look. 0 is plain matte; 1 is fully gloss, metal or glass."),
-    def(P::StarSpeed, "star_speed", "Star flight speed", "", 0.0, 6.0, 0.0, false, "With the Stars background: above 0, the view flies forward through the stars, which come up out of the distance and rush past the edges of the picture without end. The value is how fast: gentle up to about 1, and by 6 the stars are streaks. 0 leaves the stars where they are."),
+    def(P::StarSpeed, "star_speed", "Star flight speed", "", 0.0, 6.0, 0.0, false, "Above 0, the view flies forward through the stars, which come up out of the distance and rush past the edges of the picture without end. The value is how fast: gentle up to about 1, and by 6 the stars are streaks. 0 leaves the stars where they are."),
     def(P::StarBass, "star_bass", "Star flight bass", "", -1.0, 1.0, 0.0, false, "Ties the flight through the stars to the bass. Above 0, each bass hit is a surge forward, up to five times the speed at 1. Below 0, each hit holds the flight back, to a standstill at -1. 0 flies at a steady speed. It follows the same bass as the bass pulse, so Bass cutoff and Bass release shape it too."),
+    def(P::StarBrightness, "star_brightness", "Star brightness", "", 0.0, 1.0, 0.4, false, "How bright the stars are. They only show where the picture is dark, and are kept below it so the music still stands out."),
+    def(P::StarDensity, "star_density", "Star density", "", 0.0, 1.0, 0.5, false, "How many stars there are, from a sparse scatter to a crowded sky."),
+    def(P::StarVariety, "star_variety", "Star size variety", "", 0.0, 1.0, 0.5, false, "How much the stars differ in size and brightness. 0 makes them all alike; a half spreads them evenly from small to large; at 1 most are small and a few are much larger and brighter."),
 ];
 
 pub fn def_of(id: P) -> &'static Def {
@@ -202,14 +208,14 @@ pub enum Backdrop {
     /// Nothing: silence is black.
     #[default]
     Off,
-    /// Stars, which twinkle with the treble and move with the 3D camera.
+    /// Only in settings saved before the stars had a switch of their own.
     Stars,
     /// The cover of the track that is playing, blurred and dim.
     Cover,
 }
 
 impl Backdrop {
-    pub const ALL: [Backdrop; 3] = [Backdrop::Off, Backdrop::Stars, Backdrop::Cover];
+    pub const ALL: [Backdrop; 2] = [Backdrop::Off, Backdrop::Cover];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -330,6 +336,8 @@ pub struct Params {
     /// Take the colours from the cover of the track that is playing.
     pub palette_from_cover: bool,
     pub backdrop: Backdrop,
+    /// A field of stars behind the picture.
+    pub stars: bool,
     pub material: Material,
 }
 
@@ -355,6 +363,7 @@ impl Default for Params {
             lyrics_place: LyricsPlace::Bottom,
             palette_from_cover: false,
             backdrop: Backdrop::Off,
+            stars: false,
             material: Material::Matte,
         }
     }
@@ -433,6 +442,7 @@ impl Params {
             lyrics_place: self.lyrics_place,
             palette_from_cover: self.palette_from_cover,
             backdrop: self.backdrop,
+            stars: self.stars,
             material: self.material,
         }
     }
@@ -455,12 +465,20 @@ impl Params {
             lyrics_place: saved.lyrics_place,
             palette_from_cover: saved.palette_from_cover,
             backdrop: saved.backdrop,
+            stars: saved.stars,
             material: saved.material,
             ..Self::default()
         };
         for d in &DEFS {
             if let Some(v) = saved.values.get(d.key) {
                 p.set(d.id, *v);
+            }
+        }
+        // Stars used to be one of the backgrounds, sharing its brightness.
+        if p.backdrop == Backdrop::Stars {
+            (p.backdrop, p.stars) = (Backdrop::Off, true);
+            if !saved.values.contains_key(def_of(P::StarBrightness).key) {
+                p.set(P::StarBrightness, p.target(P::BackdropAmount));
             }
         }
         p
@@ -500,6 +518,8 @@ pub struct SavedParams {
     pub palette_from_cover: bool,
     #[serde(default)]
     pub backdrop: Backdrop,
+    #[serde(default)]
+    pub stars: bool,
     #[serde(default)]
     pub material: Material,
 }

@@ -34,8 +34,10 @@ struct Uniforms {
     sim: vec4<f32>,
     // HDR output on (1) or off (0), base brightness and peak brightness in units of 80 nits, test pattern on (1)
     hdr: vec4<f32>,
-    // bloom amount, background (0 black, 1 stars, 2 album cover), background brightness, treble level (0..1)
+    // bloom amount, album cover behind the picture (2) or not (0), its brightness, treble level (0..1)
     post: vec4<f32>,
+    // stars: brightness (0 is off), how many (0..1), how much their sizes differ (0..1), unused
+    stars: vec4<f32>,
     // black, then up to eight colours from quiet to loud
     stops: array<vec4<f32>, 9>,
 };
@@ -537,6 +539,16 @@ fn test_pattern(uv: vec2<f32>) -> vec4<f32> {
 // ---------------------------------------------------------------------------
 // Background: what shows where the picture is dark.
 
+// How big a star is, from a random number 0..1, by how much the sizes are
+// set to differ: all alike at 0, evenly spread at a half, and at 1 mostly
+// small with a few much larger.
+fn star_size(r: f32) -> f32 {
+    let v = u.stars.z;
+    if (v < 0.5) { return mix(0.5, r, 2.0 * v); }
+    let more = 2.0 * v - 1.0;
+    return pow(r, mix(1.0, 3.5, more)) * mix(1.0, 2.6, more);
+}
+
 // Stars at a point of a flat sky, in three sizes. They twinkle, more so
 // with treble in the music.
 fn starfield(p: vec2<f32>) -> f32 {
@@ -547,10 +559,11 @@ fn starfield(p: vec2<f32>) -> f32 {
         let g = p * scale + f32(layer) * 17.3;
         let cell = floor(g);
         let rnd = hash(cell);
-        if (rnd < 0.90) { continue; }
+        let rare = 1.0 - mix(0.015, 0.185, u.stars.y);
+        if (rnd < rare) { continue; }
         let centre = (vec2<f32>(hash(cell + 3.1), hash(cell + 7.7)) - 0.5) * 0.6;
         let d = length(fract(g) - 0.5 - centre);
-        let size = (rnd - 0.90) * 10.0;
+        let size = star_size((rnd - rare) / (1.0 - rare));
         let twinkle = 0.65 + 0.35 * sin(time * (1.5 + 5.0 * hash(cell + 1.7)) + 40.0 * rnd) * (0.35 + 0.65 * u.post.w);
         light += (0.35 + 0.65 * size) * twinkle * smoothstep(0.05 + 0.07 * size, 0.0, d) / (1.0 + 0.6 * f32(layer));
     }
@@ -575,7 +588,8 @@ fn star_flight(p: vec2<f32>) -> f32 {
         let g = p * mix(34.0, 1.6, closeness * closeness) + vec2<f32>(f32(i) * 31.7 + lap * 13.1, f32(i) * 17.3 - lap * 7.9);
         let cell = floor(g);
         let rnd = hash(cell);
-        if (rnd < 0.72) { continue; }
+        let rare = 1.0 - mix(0.04, 0.52, u.stars.y);
+        if (rnd < rare) { continue; }
         let centre = (vec2<f32>(hash(cell + 3.1), hash(cell + 7.7)) - 0.5) * 0.7;
         // At speed a star is drawn out along its path, which runs straight out
         // from the middle of the picture; the near ones most.
@@ -583,7 +597,7 @@ fn star_flight(p: vec2<f32>) -> f32 {
         let from_star = fract(g) - 0.5 - centre;
         let along = dot(from_star, outward);
         let d = length(vec2<f32>(along / (1.0 + u.cam_eye.w * closeness), length(from_star - along * outward)));
-        let size = (rnd - 0.72) / 0.28;
+        let size = star_size((rnd - rare) / (1.0 - rare));
         let twinkle = 0.75 + 0.25 * sin(time * (1.5 + 5.0 * hash(cell + 1.7)) + 40.0 * rnd) * (0.35 + 0.65 * u.post.w);
         // They come up out of the dark and are gone as they go by.
         let fade = smoothstep(0.0, 0.25, closeness) * (1.0 - smoothstep(0.88, 1.0, closeness));
@@ -602,41 +616,46 @@ fn view_ray(screen: vec2<f32>) -> vec3<f32> {
     return normalize(forward + right * (s.x * u.circle.w * spread) + up * (s.y * spread));
 }
 
-// The background behind a screen point.
+// The background behind a screen point: stars, the cover, or both.
 fn backdrop(uv: vec2<f32>) -> vec3<f32> {
-    let mode = u.post.y;
-    if (mode < 0.5) { return vec3<f32>(0.0); }
-    if (mode < 1.5) {
-        // Flat, the stars drift slowly. In 3D they are fixed in the sky all
-        // round, and seen through the black ground, so they move with the camera.
+    var behind = vec3<f32>(0.0);
+    if (u.stars.x > 0.0) {
+        var light: f32;
         if (u.sim.w > 0.0) {
             // In flight the view is straight ahead, flat or 3D.
-            return vec3<f32>(0.80, 0.88, 1.00) * star_flight((uv - 0.5) * vec2<f32>(u.circle.w, 1.0)) * u.post.z;
+            light = star_flight((uv - 0.5) * vec2<f32>(u.circle.w, 1.0));
+        } else {
+            // Flat, the stars drift slowly. In 3D they are fixed in the sky all
+            // round, and seen through the black ground, so they move with the camera.
+            var p = (uv - 0.5) * vec2<f32>(u.circle.w, 1.0) + u.relief.w * vec2<f32>(0.004, 0.0012);
+            if (u.relief.x > 0.5) {
+                let ray = view_ray(uv);
+                p = vec2<f32>(atan2(ray.x, ray.y) * 0.6, ray.z * 1.2);
+            }
+            light = starfield(p);
         }
-        var p = (uv - 0.5) * vec2<f32>(u.circle.w, 1.0) + u.relief.w * vec2<f32>(0.004, 0.0012);
-        if (u.relief.x > 0.5) {
-            let ray = view_ray(uv);
-            p = vec2<f32>(atan2(ray.x, ray.y) * 0.6, ray.z * 1.2);
+        behind += vec3<f32>(0.80, 0.88, 1.00) * light * u.stars.x;
+    }
+    if (u.post.y > 1.5) {
+        // The cover, filling the picture, blurred by averaging a ring of samples.
+        var c = (uv - 0.5) * vec2<f32>(1.0, -1.0);
+        if (u.circle.w > 1.0) { c.y /= u.circle.w; } else { c.x *= u.circle.w; }
+        var sum = textureSampleLevel(cover, cover_sampler, c + 0.5, 0.0).rgb;
+        for (var k = 0; k < 12; k++) {
+            let a = 6.2831853 * f32(k) / 12.0;
+            let r = select(0.035, 0.07, k % 2 == 0);
+            sum += textureSampleLevel(cover, cover_sampler, c + 0.5 + r * vec2<f32>(cos(a), sin(a)), 0.0).rgb;
         }
-        return vec3<f32>(0.80, 0.88, 1.00) * starfield(p) * u.post.z;
+        behind += sum / 13.0 * 0.30 * u.post.z;
     }
-    // The cover, filling the picture, blurred by averaging a ring of samples.
-    var c = (uv - 0.5) * vec2<f32>(1.0, -1.0);
-    if (u.circle.w > 1.0) { c.y /= u.circle.w; } else { c.x *= u.circle.w; }
-    var sum = textureSampleLevel(cover, cover_sampler, c + 0.5, 0.0).rgb;
-    for (var k = 0; k < 12; k++) {
-        let a = 6.2831853 * f32(k) / 12.0;
-        let r = select(0.035, 0.07, k % 2 == 0);
-        sum += textureSampleLevel(cover, cover_sampler, c + 0.5 + r * vec2<f32>(cos(a), sin(a)), 0.0).rgb;
-    }
-    return sum / 13.0 * 0.30 * u.post.z;
+    return behind;
 }
 
 // The picture before it is fitted to the display: flat or 3D, over the background.
 fn scene(uv: vec2<f32>) -> vec3<f32> {
     var colour: vec3<f32>;
     if (u.relief.x > 0.5) { colour = relief_view(uv); } else { colour = shade(uv, field(uv)); }
-    if (u.post.y > 0.5) {
+    if (u.post.y > 0.5 || u.stars.x > 0.0) {
         let brightest = max(colour.r, max(colour.g, colour.b));
         colour += backdrop(uv) * (1.0 - smoothstep(0.0, 0.45, brightest));
     }

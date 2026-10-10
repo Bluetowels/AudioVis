@@ -78,8 +78,10 @@ pub struct Uniforms {
     pub sim: [f32; 4],
     /// HDR on (1) or off (0), base and peak brightness in units of 80 nits, unused.
     pub hdr: [f32; 4],
-    /// Bloom amount, background (0 black, 1 stars, 2 cover), background brightness, treble level.
+    /// Bloom amount, cover behind the picture (2) or not (0), its brightness, treble level.
     pub post: [f32; 4],
+    /// Stars: brightness (0 is off), how many, how much their sizes differ, unused.
+    pub stars: [f32; 4],
     pub stops: [[f32; 4]; 9],
 }
 

@@ -175,6 +175,7 @@ struct Options {
     /// Self-test: colours from the cover, a background and a 3D material.
     cover_colours: bool,
     track_card: bool,
+    stars: bool,
     backdrop: Option<Backdrop>,
     material: Option<Material>,
     /// Show the lyrics in this LRC file (or the one beside this audio file,
@@ -206,6 +207,7 @@ impl Default for Options {
             lyrics_place: None,
             cover_colours: false,
             track_card: false,
+            stars: false,
             backdrop: None,
             material: None,
             lyrics_file: None,
@@ -247,6 +249,7 @@ fn parse_options() -> Options {
             // Self-test helpers for the switches that are not sliders.
             "--cover-colours" => o.cover_colours = true,
             "--track-card" => o.track_card = true,
+            "--stars" => o.stars = true,
             "--background" => {
                 o.backdrop = args.next().and_then(|name| Backdrop::ALL.into_iter().find(|b| b.label().eq_ignore_ascii_case(&name)));
             }
@@ -608,6 +611,7 @@ impl App {
             params.lyrics_place = place;
         }
         params.palette_from_cover |= options.cover_colours;
+        params.stars |= options.stars;
         params.backdrop = options.backdrop.unwrap_or(params.backdrop);
         params.material = options.material.unwrap_or(params.material);
         if options.underlay {
@@ -1157,7 +1161,8 @@ impl App {
                 p.get(P::HdrPeak).max(p.get(P::HdrBase)) / 80.0,
                 (self.hdr_active && self.hdr_pattern) as u8 as f32,
             ],
-            post: [p.get(P::Bloom), p.backdrop as u8 as f32, p.get(P::BackdropAmount), self.treble()],
+            post: [p.get(P::Bloom), if p.backdrop == Backdrop::Cover { 2.0 } else { 0.0 }, p.get(P::BackdropAmount), self.treble()],
+            stars: [if p.stars { p.get(P::StarBrightness).max(1e-4) } else { 0.0 }, p.get(P::StarDensity), p.get(P::StarVariety), 0.0],
             stops,
         }
     }
@@ -2102,15 +2107,11 @@ impl App {
                         continue;
                     }
                     let r = ui.selectable_value(&mut self.params.backdrop, b, b.label());
-                    self.describe(&r, "What shows where the picture is dark. Black: nothing, so silence is black. Stars: a field of stars that twinkle with the treble; in 3D they surround the picture and move with the camera. Album cover: the cover of the track that is playing, blurred and dim, read from Windows on this PC.");
+                    self.describe(&r, "What shows where the picture is dark. Black: nothing, so silence is black. Album cover: the cover of the track that is playing, blurred and dim, read from Windows on this PC. Stars have a section of their own, below.");
                 }
             });
             if self.params.backdrop != Backdrop::Off {
                 self.slider(ui, P::BackdropAmount);
-            }
-            if self.params.backdrop == Backdrop::Stars {
-                self.slider(ui, P::StarSpeed);
-                self.slider(ui, P::StarBass);
             }
             if self.hdr_active {
                 self.slider(ui, P::HdrBase);
@@ -2120,6 +2121,17 @@ impl App {
             }
             let r = ui.checkbox(&mut self.params.reverse_palette, "Reverse palette");
             self.describe(&r, "Swaps the palette end for end, so its loudest colour becomes its quietest. Silence stays black. On the controller: S button 7.");
+            }
+            ui.separator();
+
+            if self.section(ui, "Starfield") {
+            let r = ui.checkbox(&mut self.params.stars, "Show stars");
+            self.describe(&r, "A field of stars behind the picture, showing where it is dark. They twinkle with the treble. Still, they drift slowly when the picture is flat, and in 3D they surround it and move with the camera. With a flight speed above 0 the view flies forward through them.");
+            if self.params.stars {
+                for id in [P::StarBrightness, P::StarDensity, P::StarVariety, P::StarSpeed, P::StarBass] {
+                    self.slider(ui, id);
+                }
+            }
             }
             ui.separator();
 
@@ -2339,7 +2351,7 @@ impl eframe::App for App {
         let pace = if with_bass >= 0.0 { 1.0 + 4.0 * with_bass * self.bass_env } else { 1.0 + with_bass * self.bass_env };
         // The slider gathers pace as it goes up: 1 is a gentle drift, 6 over twenty times that.
         self.star_rate = 0.06 * star_speed * (1.0 + star_speed) * pace;
-        self.star_travel = if star_speed > 0.001 { (self.star_travel + self.star_rate * dt) % 4096.0 + 1e-6 } else { 0.0 };
+        self.star_travel = if star_speed > 0.001 && self.params.stars { (self.star_travel + self.star_rate * dt) % 4096.0 + 1e-6 } else { 0.0 };
 
         if self.show_panel {
             egui::Panel::right("controls").resizable(false).default_size(300.0).show(ui, |ui| self.panel(ui));

@@ -294,10 +294,8 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 | Colour banding | 0 | 0 to 1 | 0 blends smoothly; 1 gives hard-edged bands |
 | Reverse palette | off | | Swaps the palette end for end |
 | Bloom | 0.3 | 0 to 1 | A soft glow that spreads from the bright parts of the picture; 0 is off |
-| Background | Black | Black, Stars, Album cover | What shows where the picture is dark |
-| Background brightness | 0.4 | 0 to 1 | How bright the stars or cover are |
-| Star flight speed | 0 | 0 to 6 | Stars background: above 0, the view flies forward through the stars without end; gentle up to about 1, and at speed the stars draw out into streaks |
-| Star flight bass | 0 | -1 to 1 | Above 0, each bass hit surges the flight forward; below 0, each hit holds it back |
+| Background | Black | Black, Album cover | What shows where the picture is dark |
+| Background brightness | 0.4 | 0 to 1 | How bright the cover is |
 | HDR base brightness | 200 nits | 80 to 500 | HDR only: how bright ordinary parts of the picture and the panel are |
 | HDR peak brightness | 1000 nits | 200 to 2000 | HDR only: how bright the very loudest parts go |
 | HDR test pattern | off | | HDR only: white patches at 80, 200, 400, 800 and 1600 nits, plus the base and peak |
@@ -333,13 +331,28 @@ The built-in font covers Latin, Greek and Cyrillic letters; lyrics in other scri
 
 **Palette drift.** Smooth palettes drift through the other smooth ones in turn, and the abrupt ones (Rainbow, Zigzag, Candy, Contour, Harlequin, Circuit, Tropic, Glitch, Stained glass and Wasp) through each other, starting from the chosen palette. While a cover's colours are showing, they take over.
 
-**Background.** Black keeps the rule that silence is black. Stars is a field of stars that twinkle with the treble; flat, they drift slowly, and in 3D they surround the picture and move with the camera. Album cover is the playing track's cover, blurred and dim. Either only shows where the picture is dark. With Star flight speed above 0 the view flies forward through the stars: they come up out of the distance and rush past the edges. The stars are worked out as they are needed, not stored, so the flight never ends or loops. Star flight bass ties its speed to the same bass as the bass pulse, up to five times the speed on a hit at 1, or down to a standstill at -1.
+**Background.** Black keeps the rule that silence is black. Album cover is the playing track's cover, blurred and dim, showing only where the picture is dark.
 
 **Surface.** In 3D, Gloss adds white highlights that slide over the ridges as the camera moves, Metal mirrors a bright sky in the surface's own colour, and Glass is dim face on and bright at its edges with sharp glints. Highlights only appear where there is sound.
 
 The cover, title and artist used here and by the track card come from Windows' media controls on this PC. Nothing is sent anywhere for them; only lyrics use the network.
 
-### App| Setting | Default |
+### Starfield
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Show stars | off | | A field of stars behind the picture, showing where it is dark |
+| Star brightness | 0.4 | 0 to 1 | How bright the stars are |
+| Star density | 0.5 | 0 to 1 | How many there are, from a sparse scatter to a crowded sky |
+| Star size variety | 0.5 | 0 to 1 | 0 makes them all alike; at 1 most are small and a few are much larger and brighter |
+| Star flight speed | 0 | 0 to 6 | Above 0, the view flies forward through the stars without end; gentle up to about 1, and at speed the stars draw out into streaks |
+| Star flight bass | 0 | -1 to 1 | Above 0, each bass hit surges the flight forward; below 0, each hit holds it back |
+
+The stars twinkle with the treble. Still, they drift slowly when the picture is flat, and in 3D they surround it and move with the camera. With Star flight speed above 0 the view flies forward through them: they come up out of the distance and rush past the edges. The stars are worked out as they are needed, not stored, so the flight never ends or loops. Star flight bass ties its speed to the same bass as the bass pulse, up to five times the speed on a hit at 1, or down to a standstill at -1. Stars and the album cover background can be on together.
+
+### App
+
+| Setting | Default |
 |---|---|
 | Audio source | Default output device |
 | Window | 1280 x 720, panel shown |
