@@ -6,6 +6,8 @@ mod analysis;
 mod android;
 mod audio;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod cover;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod lyrics;
 mod midi;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -18,7 +20,7 @@ use analysis::{BINS_PER_OCTAVE, BassMeter, F_MIN, N_BINS, Vqt};
 use audio::{Capture, Channel, Source};
 use eframe::egui;
 use midi::{Bindings, Controller};
-use params::{BassStyle, DEFS, LyricsPlace, Mirror, P, PALETTES, Params, SavedParams, Shape, def_of};
+use params::{Backdrop, BassStyle, DEFS, LyricsPlace, Material, Mirror, P, PALETTES, Params, SavedParams, Shape, def_of};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -68,6 +70,9 @@ struct Settings {
     /// The lyrics sync offset in ms for each music app, by the app's id.
     #[serde(default)]
     lyrics_offsets: std::collections::BTreeMap<String, f32>,
+    /// Show the title and artist for a few seconds when a track starts.
+    #[serde(default = "params::yes")]
+    track_card: bool,
 }
 
 #[cfg(windows)]
@@ -167,6 +172,10 @@ struct Options {
     lyrics: bool,
     /// Where to draw them on this run.
     lyrics_place: Option<LyricsPlace>,
+    /// Self-test: colours from the cover, a background and a 3D material.
+    cover_colours: bool,
+    backdrop: Option<Backdrop>,
+    material: Option<Material>,
     /// Show the lyrics in this LRC file (or the one beside this audio file,
     /// with the same name), timed from when the app starts,
     /// instead of looking up what is playing.
@@ -194,6 +203,9 @@ impl Default for Options {
             demo_hint: None,
             lyrics: false,
             lyrics_place: None,
+            cover_colours: false,
+            backdrop: None,
+            material: None,
             lyrics_file: None,
             midi_port: MIDI_PORT.into(),
             selftest: None,
@@ -230,6 +242,14 @@ fn parse_options() -> Options {
             "--underlay" => o.underlay = true,
             "--show-hint" => o.demo_hint = args.next(),
             "--lyrics" => o.lyrics = true,
+            // Self-test helpers for the switches that are not sliders.
+            "--cover-colours" => o.cover_colours = true,
+            "--background" => {
+                o.backdrop = args.next().and_then(|name| Backdrop::ALL.into_iter().find(|b| b.label().eq_ignore_ascii_case(&name)));
+            }
+            "--material" => {
+                o.material = args.next().and_then(|name| Material::ALL.into_iter().find(|m| m.label().eq_ignore_ascii_case(&name)));
+            }
             "--lyrics-place" => {
                 o.lyrics_place = args.next().and_then(|name| LyricsPlace::ALL.into_iter().find(|place| place.label().eq_ignore_ascii_case(&name)));
             }
@@ -497,6 +517,14 @@ struct App {
     hdr_pattern: bool,
     /// Seconds of 3D flight flown so far, scaled by the flight speed.
     flight_time: f32,
+    /// What another app is playing, as of this frame, if anything here wants to know.
+    playing: Option<nowplaying::Now>,
+    /// The colours the picture is being drawn in.
+    look: cover::Look,
+    /// The colours taken from a cover, and which cover (by its address).
+    cover_look: Option<(usize, cover::Look)>,
+    /// Whether the title and artist are shown as a track starts.
+    track_card: bool,
     /// Whether lyrics are shown.
     lyrics: bool,
     /// Watches what other apps are playing; started the first time lyrics are on.
@@ -542,6 +570,7 @@ impl App {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok());
         let show_surface = options.surface || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.show_surface));
+        let track_card = options.selftest.is_none() && saved.as_ref().is_none_or(|s| s.track_card);
         let lyrics = options.lyrics || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.lyrics));
         let lyrics_offsets = saved.as_ref().filter(|_| options.selftest.is_none()).map(|s| s.lyrics_offsets.clone()).unwrap_or_default();
         let lyrics_file = options.lyrics_file.as_deref().and_then(lyrics::sidecar).map(Into::into);
@@ -563,6 +592,9 @@ impl App {
         if let Some(place) = options.lyrics_place {
             params.lyrics_place = place;
         }
+        params.palette_from_cover |= options.cover_colours;
+        params.backdrop = options.backdrop.unwrap_or(params.backdrop);
+        params.material = options.material.unwrap_or(params.material);
         if options.underlay {
             params.bass_style = BassStyle::Underlay;
         }
@@ -575,6 +607,7 @@ impl App {
         let capture = Capture::open(options.source.clone().or(saved_source).unwrap_or(FIRST_SOURCE));
         let sample_rate = capture.sample_rate();
         let (bass_window_s, detail) = (params.target(P::BassWindow) / 1000.0, params.target(P::Detail));
+        let look = palette_look(&params);
         Self {
             show_panel: options.show_panel,
             fullscreen: options.fullscreen,
@@ -624,6 +657,10 @@ impl App {
             hdr_active,
             hdr_pattern: false,
             flight_time: 0.0,
+            playing: None,
+            look,
+            cover_look: None,
+            track_card,
             lyrics,
             now_playing: None,
             lookup: lyrics::Lookup::new(config_dir().join("lyrics")),
@@ -667,6 +704,7 @@ impl App {
             hdr: self.hdr,
             lyrics: self.lyrics,
             lyrics_offsets: self.lyrics_offsets.clone(),
+            track_card: self.track_card,
         };
         serde_json::to_string_pretty(&settings).ok()
     }
@@ -1045,21 +1083,21 @@ impl App {
         if high < low + 0.02 {
             (low, high) = (low.min(0.98), (low + 0.02).min(1.0));
         }
-        let palette = &PALETTES[p.palette()];
-        let count = palette.stops.len().min(params::MAX_STOPS);
+        let look = &self.look;
+        let count = look.stops.len().min(params::MAX_STOPS);
         let mut stops = [[0.0, 0.0, 0.0, 1.0]; 9];
         for i in 0..count {
-            let c = palette.stops[if p.reverse_palette { count - 1 - i } else { i }];
+            let c = look.stops[if p.reverse_palette { count - 1 - i } else { i }];
             stops[i + 1] = [c[0], c[1], c[2], 1.0];
         }
-        let accent = p.bass_colour.unwrap_or(palette.accent);
+        let accent = p.bass_colour.unwrap_or(look.accent);
 
         // 3D camera. Normally it looks at the centre from a tilt and an orbit
         // angle. In flight it wanders on slow, overlapping curves that never
         // repeat exactly, staying above the surface and looking near the centre.
         let height = 0.35 * p.get(P::ReliefHeight);
         let (eye, target) = self.camera;
-        let surround = p.surround_colour.unwrap_or(params::SURROUND_COLOURS[p.palette()]);
+        let surround = p.surround_colour.unwrap_or(look.surround);
         let amount = if p.bass_boost { p.get(P::BassAmount) } else { 0.0 };
         render::Uniforms {
             layout: [p.mirror as u8 as f32, p.flip_x as u8 as f32, p.flip_y as u8 as f32, p.get(P::Combine)],
@@ -1094,6 +1132,42 @@ impl App {
             ],
             stops,
         }
+    }
+
+    /// Ask what other apps are playing, if anything here uses it: the lyrics,
+    /// colours from the cover, the cover as a background, or the track card.
+    fn update_playing(&mut self) {
+        let wanted = (self.lyrics && self.lyrics_file.is_none())
+            || self.params.palette_from_cover
+            || self.params.backdrop == Backdrop::Cover
+            || self.track_card;
+        self.playing = if wanted { self.now_playing.get_or_insert_with(nowplaying::NowPlaying::start).now() } else { None };
+    }
+
+    /// Move the colours in use towards the ones wanted: the chosen palette's,
+    /// or the playing track's cover's. A new track's colours fade in.
+    fn update_look(&mut self, dt: f32) {
+        let cover = self.playing.as_ref().and_then(|now| now.cover.as_ref()).filter(|_| self.params.palette_from_cover);
+        let wanted = match cover {
+            Some(cover) => {
+                let address = std::sync::Arc::as_ptr(cover) as usize;
+                if self.cover_look.as_ref().is_none_or(|(of, _)| *of != address) {
+                    self.cover_look = Some((address, cover::look(cover)));
+                }
+                self.cover_look.as_ref().map(|(_, look)| look.clone()).unwrap_or_else(|| palette_look(&self.params))
+            }
+            None => palette_look(&self.params),
+        };
+        if cover.is_none() || wanted.stops.len() != self.look.stops.len() {
+            // Changing palette by hand is immediate.
+            self.look = wanted;
+            return;
+        }
+        let k = 1.0 - (-dt / 0.5).exp();
+        let ease = |from: &mut [f32; 3], to: &[f32; 3]| (0..3).for_each(|i| from[i] += (to[i] - from[i]) * k);
+        self.look.stops.iter_mut().zip(&wanted.stops).for_each(|(from, to)| ease(from, to));
+        ease(&mut self.look.accent, &wanted.accent);
+        ease(&mut self.look.surround, &wanted.surround);
     }
 
     /// The track as the lyrics search wants it.
@@ -1135,7 +1209,7 @@ impl App {
         let (lines, position, app) = match &self.lyrics_file {
             Some(lines) => (Some(lines.clone()), Some(self.started.elapsed().as_secs_f64()), "file".to_string()),
             None => {
-                let Some(now) = self.now_playing.get_or_insert_with(nowplaying::NowPlaying::start).now() else {
+                let Some(now) = &self.playing else {
                     self.lyrics_track = None;
                     return;
                 };
@@ -1147,9 +1221,11 @@ impl App {
                     lyrics::State::Synced(lines) => Some(lines),
                     _ => None,
                 };
-                let app = now.track.app.clone();
-                self.lyrics_track = Some(now.track);
-                (lines, now.position, app)
+                let (app, position) = (now.track.app.clone(), now.position);
+                if self.lyrics_track.as_ref() != Some(&now.track) {
+                    self.lyrics_track = Some(now.track.clone());
+                }
+                (lines, position, app)
             }
         };
 
@@ -1179,7 +1255,7 @@ impl App {
     /// belong to the picture: one for words waiting or already sung, and a
     /// brighter one for the word being sung.
     fn lyric_colours(&self) -> ([f32; 3], [f32; 3]) {
-        let mut stops = PALETTES[self.params.palette()].stops.to_vec();
+        let mut stops = self.look.stops.clone();
         let light = |c: &[f32; 3]| 0.2 * c[0] + 0.7 * c[1] + 0.1 * c[2];
         stops.sort_by(|a, b| light(b).total_cmp(&light(a)));
         // Lifted towards white far enough to read over the picture.
@@ -1848,6 +1924,11 @@ impl App {
 
             if self.section(ui, "Colour") {
             self.slider(ui, P::Palette);
+            #[cfg(windows)]
+            {
+            let r = ui.checkbox(&mut self.params.palette_from_cover, "Colours from the album cover");
+            self.describe(&r, "Take the colours from the cover of whatever track is playing, so each track has its own look: its two strongest colours from dark to bright, with a bass colour chosen to stand apart from them. The cover is read from Windows on this PC; nothing is sent anywhere. With nothing playing, or a player that shows no cover, the palette above is used.");
+            }
             self.slider(ui, P::Banding);
             if self.hdr_active {
                 self.slider(ui, P::HdrBase);
@@ -1931,6 +2012,12 @@ impl App {
             }
         });
     }
+}
+
+/// The colours of the palette chosen in the panel.
+fn palette_look(params: &Params) -> cover::Look {
+    let palette = &PALETTES[params.palette()];
+    cover::Look { stops: palette.stops.to_vec(), accent: palette.accent, surround: params::SURROUND_COLOURS[params.palette()] }
 }
 
 /// One word of a line of lyrics as laid out on screen: when it is sung and
@@ -2059,6 +2146,8 @@ impl eframe::App for App {
         self.flight_time += dt * self.params.get(P::Flight);
         let orbit = self.params.get(P::Orbit);
         self.orbit_angle = if orbit.abs() < 0.05 { 0.0 } else { (self.orbit_angle + orbit.to_radians() * dt) % std::f32::consts::TAU };
+        self.update_playing();
+        self.update_look(dt);
         let (gain, glow) = self.analyse(dt);
         self.update_camera(dt, gain, glow);
 
@@ -2178,6 +2267,20 @@ impl eframe::App for App {
                 #[cfg(windows)]
                 if self.lyrics {
                     println!("selftest: lyrics: {}", self.lyrics_status());
+                }
+                // The cover as read from the player, beside the screenshot, to compare the colours with.
+                if let Some(cover) = self.playing.as_ref().and_then(|now| now.cover.as_ref()) {
+                    let _ = image::save_buffer(path.with_extension("cover.png"), &cover.rgba, cover.size as u32, cover.size as u32, image::ColorType::Rgba8);
+                }
+                if self.params.palette_from_cover {
+                    let hex = |c: &[f32; 3]| format!("#{:02x}{:02x}{:02x}", (c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8);
+                    println!(
+                        "selftest: colours from cover {}: {:?}, bass {}, surround {}",
+                        self.playing.as_ref().is_some_and(|now| now.cover.is_some()),
+                        self.look.stops.iter().map(hex).collect::<Vec<_>>(),
+                        hex(&self.look.accent),
+                        hex(&self.look.surround)
+                    );
                 }
                 let (ppp, info) = (ctx.pixels_per_point(), ctx.input(|i| i.viewport().clone()));
                 println!(
