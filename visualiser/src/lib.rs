@@ -1217,7 +1217,9 @@ impl App {
             || self.params.palette_from_cover
             || self.params.backdrop == Backdrop::Cover
             || self.track_card
-            || self.card_fly_asked;
+            || self.card_fly_asked
+            // One asked for by hand is still on its way.
+            || (self.card.is_some() && self.card_flying && self.card_near < 1.0);
         self.playing = if wanted { self.now_playing.get_or_insert_with(nowplaying::NowPlaying::start).now() } else { None };
     }
 
