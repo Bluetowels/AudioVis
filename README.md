@@ -367,7 +367,7 @@ The stars twinkle with the treble. Still, they drift slowly when the picture is 
 | FPS counter, FPS graph | off |
 | Show lyrics | off |
 | Show each track's title as it starts | on (Windows only: title, artist, album and cover in the top-right corner for a few seconds) |
-| Fly the title in from the distance | off (instead of the corner, the cover and title start as a dot far ahead and come towards you, growing to fill the picture and thinning away as they do; with the stars flying they come from the point the stars stream out of) |
+| Fly the title in from the distance | off (instead of the corner, the cover and title start as a dot far ahead and come towards you, growing to fill the picture and thinning away as they do; with the stars flying they come from the point the stars stream out of, and Star flight bass and Star flight turn are set aside until they have passed) |
 
 ### HDR
 

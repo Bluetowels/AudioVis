@@ -556,6 +556,8 @@ struct App {
     /// How hard the flight is turning (0 to 1), and how long it has been held there.
     star_turn_level: f32,
     star_turn_held: f32,
+    /// How far the flight is being held steady for a title flying in (0 to 1).
+    star_steady: f32,
     /// Which cover the renderer was last given (by its address; 0 for none).
     cover_sent: usize,
     /// Whether the title and artist are shown as a track starts.
@@ -719,6 +721,7 @@ impl App {
             star_bass_was: 0.0,
             star_turn_level: 0.0,
             star_turn_held: 0.0,
+            star_steady: 0.0,
             cover_sent: 0,
             track_card,
             track_card_fly,
@@ -2117,7 +2120,7 @@ impl App {
             self.describe(&r, "When a new track starts in a music app, show its title, artist, album and cover in the top-right corner of the picture for a few seconds. These are read from Windows on this PC; nothing is sent anywhere.");
             if self.track_card {
                 let r = ui.checkbox(&mut self.track_card_fly, "Fly the title in from the distance");
-                self.describe(&r, "Instead of the corner, the cover and title start as a dot far ahead and come towards you, growing until they fill the picture and thinning away as they do. With the stars flying they come at the stars' pace, from the point the stars stream out of, turns included.");
+                self.describe(&r, "Instead of the corner, the cover and title start as a dot far ahead and come towards you, growing until they fill the picture and thinning away as they do. With the stars flying they come at the stars' pace, from the point the stars stream out of, and the flight holds a steady course and speed until they have passed.");
             }
             }
             // HDR output has only been built and tried on Windows.
@@ -2590,7 +2593,12 @@ impl eframe::App for App {
         // The flight through the stars: a bass hit surges it forward or holds
         // it back. Kept small so it stays exact, and never quite 0 while flying.
         let star_speed = self.params.get(P::StarSpeed);
-        let with_bass = self.params.get(P::StarBass);
+        // While a title is flying in, the flight holds a steady course and
+        // speed, so the title comes straight on; both ease back afterwards.
+        let title_coming = self.card.is_some() && self.card_flying && self.card_near < 1.0;
+        self.star_steady += (if title_coming { 1.0 } else { 0.0 } - self.star_steady) * (1.0 - (-dt / 0.35).exp());
+        let free = 1.0 - self.star_steady;
+        let with_bass = self.params.get(P::StarBass) * free;
         let pace = if with_bass >= 0.0 { 1.0 + 4.0 * with_bass * self.bass_env } else { 1.0 + with_bass * self.bass_env };
         // The slider gathers pace as it goes up: 1 is a gentle drift, 6 over twenty times that.
         self.star_rate = 0.06 * star_speed * (1.0 + star_speed) * pace;
@@ -2614,7 +2622,7 @@ impl eframe::App for App {
                 self.star_turn_level = self.bass_env.max(self.star_turn_level * release);
             }
         }
-        let reach = 0.45 * self.params.get(P::StarTurn) * self.star_turn_level;
+        let reach = 0.45 * self.params.get(P::StarTurn) * self.star_turn_level * free;
         let ease = 1.0 - (-dt / 0.12).exp();
         for (i, wanted) in [reach * way.cos(), reach * way.sin()].into_iter().enumerate() {
             self.star_heading[i] += (wanted - self.star_heading[i]) * ease;
