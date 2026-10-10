@@ -73,6 +73,9 @@ struct Settings {
     /// Show the title and artist for a few seconds when a track starts.
     #[serde(default = "params::yes")]
     track_card: bool,
+    /// Bring the title in from the distance instead of showing it in the corner.
+    #[serde(default)]
+    track_card_fly: bool,
 }
 
 #[cfg(windows)]
@@ -175,6 +178,7 @@ struct Options {
     /// Self-test: colours from the cover, a background and a 3D material.
     cover_colours: bool,
     track_card: bool,
+    track_card_fly: bool,
     stars: bool,
     backdrop: Option<Backdrop>,
     material: Option<Material>,
@@ -207,6 +211,7 @@ impl Default for Options {
             lyrics_place: None,
             cover_colours: false,
             track_card: false,
+            track_card_fly: false,
             stars: false,
             backdrop: None,
             material: None,
@@ -249,6 +254,7 @@ fn parse_options() -> Options {
             // Self-test helpers for the switches that are not sliders.
             "--cover-colours" => o.cover_colours = true,
             "--track-card" => o.track_card = true,
+            "--track-card-fly" => o.track_card_fly = true,
             "--stars" => o.stars = true,
             "--background" => {
                 o.backdrop = args.next().and_then(|name| Backdrop::ALL.into_iter().find(|b| b.label().eq_ignore_ascii_case(&name)));
@@ -550,8 +556,11 @@ struct App {
     cover_sent: usize,
     /// Whether the title and artist are shown as a track starts.
     track_card: bool,
+    track_card_fly: bool,
     /// The track on the card, and when it came on.
     card: Option<(nowplaying::Track, Instant)>,
+    /// How near a title flying in has come: 0 a dot in the distance, 1 filling the picture.
+    card_near: f32,
     /// The cover as a picture the interface can draw, and which cover (by its address).
     card_cover: Option<(usize, egui::TextureHandle)>,
     /// Whether lyrics are shown.
@@ -599,7 +608,8 @@ impl App {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok());
         let show_surface = options.surface || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.show_surface));
-        let track_card = options.track_card || (options.selftest.is_none() && saved.as_ref().is_none_or(|s| s.track_card));
+        let track_card_fly = options.track_card_fly || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.track_card_fly));
+        let track_card = options.track_card || options.track_card_fly || (options.selftest.is_none() && saved.as_ref().is_none_or(|s| s.track_card));
         let lyrics = options.lyrics || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.lyrics));
         let lyrics_offsets = saved.as_ref().filter(|_| options.selftest.is_none()).map(|s| s.lyrics_offsets.clone()).unwrap_or_default();
         let lyrics_file = options.lyrics_file.as_deref().and_then(lyrics::sidecar).map(Into::into);
@@ -701,7 +711,9 @@ impl App {
             star_turn_held: 0.0,
             cover_sent: 0,
             track_card,
+            track_card_fly,
             card: None,
+            card_near: 0.0,
             card_cover: None,
             lyrics,
             now_playing: None,
@@ -747,6 +759,7 @@ impl App {
             lyrics: self.lyrics,
             lyrics_offsets: self.lyrics_offsets.clone(),
             track_card: self.track_card,
+            track_card_fly: self.track_card_fly,
         };
         serde_json::to_string_pretty(&settings).ok()
     }
@@ -1674,10 +1687,11 @@ impl App {
         let same = |a: &nowplaying::Track, b: &nowplaying::Track| a.app == b.app && a.title == b.title && a.artist == b.artist;
         if !now.track.title.is_empty() && self.card.as_ref().is_none_or(|(track, _)| !same(track, &now.track)) {
             self.card = Some((now.track.clone(), Instant::now()));
+            self.card_near = 0.0;
         }
         let Some((track, since)) = &self.card else { return };
         let age = since.elapsed().as_secs_f32();
-        if age > SHOWN_S {
+        if if self.track_card_fly { self.card_near >= 1.0 } else { age > SHOWN_S } {
             return;
         }
         let seen = (age / 0.4).min(1.0) * ((SHOWN_S - age) / 1.2).min(1.0);
@@ -1693,6 +1707,69 @@ impl App {
             }
         } else {
             self.card_cover = None;
+        }
+
+        if self.track_card_fly {
+            // It comes on with the stars: at their pace when they are flying,
+            // but never so fast that it cannot be read, nor so slowly that it lingers.
+            let pace = if self.star_travel > 0.0 { self.star_rate.clamp(0.1, 0.2) } else { 0.14 };
+            self.card_near = (self.card_near + pace * self.frame_dt).min(1.0);
+            let near = self.card_near;
+            // Its share of the picture's height. It grows by the same factor
+            // each moment, as anything approached at a steady speed does: a dot
+            // for a while, readable for a second or two, then on top of you.
+            let share = 1.15 * 0.003f32.powf(1.0 - near);
+            let smooth = |x: f32| {
+                let x = x.clamp(0.0, 1.0);
+                x * x * (3.0 - 2.0 * x)
+            };
+            // Out of the dark, and thinning away as it comes to fill the picture.
+            let seen = smooth(near / 0.12) * (1.0 - smooth((near - 0.78) / 0.22));
+            // Laid out once at a fixed size, then drawn at whatever size it has reached.
+            let wrap = 700.0;
+            let centred = |text: &str, size: f32| {
+                let mut job = egui::text::LayoutJob::default();
+                job.wrap.max_width = wrap;
+                job.halign = egui::Align::Center;
+                job.append(text, 0.0, egui::TextFormat { font_id: egui::FontId::proportional(size), color: egui::Color32::WHITE, ..Default::default() });
+                painter.layout_job(job)
+            };
+            let (title, artist) = (centred(&track.title, 56.0), centred(&track.artist, 36.0));
+            let side = if self.card_cover.is_some() { 420.0 } else { 0.0 };
+            let whole = side + 24.0 + title.size().y + 8.0 + artist.size().y;
+            let scale = share * picture.height() / whole * 1.0;
+            // Dead ahead: where the stars are streaming from.
+            let ahead = picture.center() + egui::vec2(self.star_heading[0], -self.star_heading[1]) * picture.height();
+            let top = ahead.y - 0.5 * whole * scale;
+            if let Some((_, texture)) = &self.card_cover {
+                let image = egui::Rect::from_center_size(egui::pos2(ahead.x, top + 0.5 * side * scale), egui::vec2(side, side) * scale);
+                let all = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                painter.image(texture.id(), image, all, egui::Color32::WHITE.gamma_multiply(seen));
+            }
+            let atlas = painter.ctx().fonts(|fonts| fonts.font_image_size());
+            let mut y = top + (side + 24.0) * scale;
+            for (galley, grey) in [(title, 255u8), (artist, 200)] {
+                for (offset, colour) in [
+                    (egui::vec2(1.5, 1.5) * scale.max(0.3), egui::Color32::from_black_alpha((200.0 * seen) as u8)),
+                    (egui::Vec2::ZERO, egui::Color32::from_gray(grey).gamma_multiply(seen)),
+                ] {
+                    let mut mesh = egui::Mesh::default();
+                    for row in &galley.rows {
+                        let source = &row.visuals.mesh;
+                        mesh.texture_id = source.texture_id;
+                        let first = mesh.vertices.len() as u32;
+                        mesh.vertices.extend(source.vertices.iter().map(|v| egui::epaint::Vertex {
+                            pos: egui::pos2(ahead.x, y) + (row.pos.to_vec2() + v.pos.to_vec2()) * scale + offset,
+                            uv: egui::pos2(v.uv.x / atlas[0] as f32, v.uv.y / atlas[1] as f32),
+                            color: colour,
+                        }));
+                        mesh.indices.extend(source.indices.iter().map(|i| first + i));
+                    }
+                    painter.add(mesh);
+                }
+                y += (galley.size().y + 8.0) * scale;
+            }
+            return;
         }
 
         let wrap = (0.3 * picture.width()).max(160.0);
@@ -1921,6 +1998,10 @@ impl App {
             {
             let r = ui.checkbox(&mut self.track_card, "Show each track's title as it starts");
             self.describe(&r, "When a new track starts in a music app, show its title, artist, album and cover in the top-right corner of the picture for a few seconds. These are read from Windows on this PC; nothing is sent anywhere.");
+            if self.track_card {
+                let r = ui.checkbox(&mut self.track_card_fly, "Fly the title in from the distance");
+                self.describe(&r, "Instead of the corner, the cover and title start as a dot far ahead and come towards you, growing until they fill the picture and thinning away as they do. With the stars flying they come at the stars' pace, from the point the stars stream out of, turns included.");
+            }
             }
             // HDR output has only been built and tried on Windows.
             #[cfg(windows)]

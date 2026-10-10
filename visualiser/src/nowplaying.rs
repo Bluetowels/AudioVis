@@ -18,7 +18,7 @@ pub struct Track {
 }
 
 /// Side of the square a cover is shrunk to, in pixels.
-pub const COVER_SIZE: u32 = 96;
+pub const COVER_SIZE: u32 = 256;
 
 /// A track's cover picture, shrunk to a square `COVER_SIZE` on a side.
 pub struct Cover {
