@@ -1420,7 +1420,7 @@ impl App {
         };
         // How much the words that are not being sung show.
         let strength = p.get(P::LyricsStrength);
-        let quiet = if tint.is_some() { 0.5 + 0.5 * strength } else { 0.10 + 0.70 * strength };
+        let quiet = if tint.is_some() { 0.75 + 0.25 * strength } else { 0.10 + 0.70 * strength };
         // Brightness follows the bass. In HDR the words stay at the panel's
         // steady white, well under the picture's peaks.
         let bass = if p.bass_boost { self.bass_env } else { 0.0 };
@@ -1574,9 +1574,10 @@ impl App {
     fn draw_lyrics_crawl(&self, painter: &egui::Painter, picture: egui::Rect, lines: &[lyrics::Line], now: f64, size: f32) {
         const YELLOW: [f32; 3] = [1.0, 0.86, 0.16];
         /// How many times further away than the bottom edge the line being sung is.
-        const READING: f32 = 1.5;
-        /// Lines fade out between these distances.
-        const FADE: (f32, f32) = (3.2, 5.5);
+        const READING: f32 = 1.2;
+        /// Lines fade away between these distances: from just past the one
+        /// being sung, so the page thins steadily as it goes.
+        const FADE: (f32, f32) = (1.45, 3.8);
         let started = lines.partition_point(|line| line.start <= now);
         let Some(current) = started.checked_sub(1) else { return };
 
@@ -1610,7 +1611,7 @@ impl App {
         let rolled = (galley.size().y + gap) * ((now - lines[current].start) / until_next).clamp(0.0, 1.0) as f32;
 
         // Draw a line whose top is `down` the page from the top of the current one.
-        let draw = |galley: &egui::Galley, words: &[LyricWord], down: f32, dim: f32| {
+        let draw = |galley: &egui::Galley, words: &[LyricWord], down: f32, dim: f32, colour: [f32; 3]| {
             let distance = |y: f32| READING + (rolled - (down + y)) / stretch;
             self.lyric_text(
                 painter,
@@ -1619,7 +1620,7 @@ impl App {
                 now,
                 near_size,
                 dim,
-                Some(YELLOW),
+                Some(colour),
                 &|at| {
                     let away = distance(at.y);
                     // Nearer than this it is off the bottom of the picture anyway.
@@ -1629,7 +1630,11 @@ impl App {
             );
         };
 
-        draw(&galley, &lyric_words(&galley, &lines[current], next_start), 0.0, 1.0);
+        // The line being sung is solid and a shade paler than the rest, and
+        // eases back to their colour as it rolls away.
+        let sung = 1.0 - smooth(rolled / (galley.size().y + gap));
+        let paler = YELLOW.map(|v| v + (1.0 - v) * 0.45 * sung);
+        draw(&galley, &lyric_words(&galley, &lines[current], next_start), 0.0, 0.62 + 0.38 * sung.max(0.35), paler);
         // The lines already sung, further up the page and further away.
         let mut down = 0.0;
         for earlier in lines[..current].iter().rev() {
@@ -1638,7 +1643,7 @@ impl App {
             if READING + (rolled - down - galley.size().y) / stretch > FADE.1 {
                 break;
             }
-            draw(&galley, &[], down, 0.8);
+            draw(&galley, &[], down, 0.62, YELLOW);
         }
         // The lines to come, lower down and nearer, until they are off the bottom.
         let mut down = galley.size().y + gap;
@@ -1647,7 +1652,7 @@ impl App {
                 break;
             }
             let galley = layout(later);
-            draw(&galley, &[], down, 0.8);
+            draw(&galley, &[], down, 0.62, YELLOW);
             down += galley.size().y + gap;
         }
     }
