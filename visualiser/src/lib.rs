@@ -526,6 +526,8 @@ struct App {
     look: cover::Look,
     /// The colours taken from a cover, and which cover (by its address).
     cover_look: Option<(usize, cover::Look)>,
+    /// How far palette drift has gone, in palettes.
+    palette_drift: f32,
     /// Which cover the renderer was last given (by its address; 0 for none).
     cover_sent: usize,
     /// Whether the title and artist are shown as a track starts.
@@ -669,6 +671,7 @@ impl App {
             playing: None,
             look,
             cover_look: None,
+            palette_drift: 0.0,
             cover_sent: 0,
             track_card,
             card: None,
@@ -1141,7 +1144,7 @@ impl App {
             ],
             cam_eye: [eye[0], eye[1], eye[2], 0.0],
             cam_target: [target[0], target[1], target[2], 0.0],
-            sim: [self.frame_dt, (p.get(P::Storm) * render::MAX_DROPS as f32).floor(), 0.0, 0.0],
+            sim: [self.frame_dt, (p.get(P::Storm) * render::MAX_DROPS as f32).floor(), p.get(P::SurfaceAmount), 0.0],
             hdr: [
                 self.hdr_active as u8 as f32,
                 p.get(P::HdrBase) / 80.0,
@@ -1163,11 +1166,50 @@ impl App {
         self.playing = if wanted { self.now_playing.get_or_insert_with(nowplaying::NowPlaying::start).now() } else { None };
     }
 
+    /// The chosen palette's colours, or with palette drift on, a blend on the
+    /// way from one palette to the next of its kind.
+    fn drifting_look(&mut self, dt: f32) -> cover::Look {
+        let seconds = self.params.get(P::PaletteDrift);
+        if seconds < 0.5 {
+            self.palette_drift = 0.0;
+            return palette_look(&self.params);
+        }
+        self.palette_drift += dt / seconds;
+        // Smooth palettes take turns with the smooth, abrupt ones with the abrupt.
+        let chosen = self.params.palette();
+        let abrupt = |i: usize| PALETTES[i].stops.len() > 4;
+        let turns: Vec<usize> = (0..PALETTES.len()).map(|k| (chosen + k) % PALETTES.len()).filter(|i| abrupt(*i) == abrupt(chosen)).collect();
+        let at = self.palette_drift.rem_euclid(turns.len() as f32);
+        let (from, to) = (turns[at as usize % turns.len()], turns[(at as usize + 1) % turns.len()]);
+        // Each palette is held for a while, then blends into the next.
+        let t = ((at.fract() - 0.35) / 0.65).clamp(0.0, 1.0);
+        let t = t * t * (3.0 - 2.0 * t);
+        let mix = |a: [f32; 3], b: [f32; 3]| std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
+        // Palettes have four or eight colours; as eight they can be blended one for one.
+        let eight = |i: usize| -> Vec<[f32; 3]> {
+            let stops = PALETTES[i].stops;
+            (1..=8)
+                .map(|k| {
+                    let s = k as f32 / 8.0 * stops.len() as f32;
+                    let upper = (s.ceil() as usize).clamp(1, stops.len());
+                    let below = if upper == 1 { [0.0; 3] } else { stops[upper - 2] };
+                    let part = s - (upper - 1) as f32;
+                    std::array::from_fn(|c| below[c] + (stops[upper - 1][c] - below[c]) * part)
+                })
+                .collect()
+        };
+        cover::Look {
+            stops: eight(from).into_iter().zip(eight(to)).map(|(a, b)| mix(a, b)).collect(),
+            accent: mix(PALETTES[from].accent, PALETTES[to].accent),
+            surround: mix(params::SURROUND_COLOURS[from], params::SURROUND_COLOURS[to]),
+        }
+    }
+
     /// Move the colours in use towards the ones wanted: the chosen palette's,
     /// or the playing track's cover's. A new track's colours fade in.
     fn update_look(&mut self, dt: f32) {
-        let cover = self.playing.as_ref().and_then(|now| now.cover.as_ref()).filter(|_| self.params.palette_from_cover);
-        let wanted = match cover {
+        let cover = self.playing.as_ref().and_then(|now| now.cover.clone()).filter(|_| self.params.palette_from_cover);
+        let wanted = match &cover {
             Some(cover) => {
                 let address = std::sync::Arc::as_ptr(cover) as usize;
                 if self.cover_look.as_ref().is_none_or(|(of, _)| *of != address) {
@@ -1175,7 +1217,7 @@ impl App {
                 }
                 self.cover_look.as_ref().map(|(_, look)| look.clone()).unwrap_or_else(|| palette_look(&self.params))
             }
-            None => palette_look(&self.params),
+            None => self.drifting_look(dt),
         };
         if cover.is_none() || wanted.stops.len() != self.look.stops.len() {
             // Changing palette by hand is immediate.
@@ -2027,9 +2069,12 @@ impl App {
                 ui.label("Surface");
                 for m in Material::ALL {
                     let r = ui.selectable_value(&mut self.params.material, m, m.label());
-                    self.describe(&r, "What the 3D surface looks as if it is made of. Matte: plain light and shade. Gloss: shiny plastic, with white highlights that slide over the ridges as the camera moves. Metal: polished, mirroring a bright sky in its own colour. Glass: dim face on and bright at the edges, with sharp glints. Highlights only appear where there is sound.");
+                    self.describe(&r, "What the 3D surface looks as if it is made of. Surface strength, below, sets how far it goes. Matte: plain light and shade. Gloss: shiny plastic, with white highlights that slide over the ridges as the camera moves. Metal: polished, mirroring a bright sky in its own colour. Glass: dim face on and bright at the edges, with sharp glints. Highlights only appear where there is sound.");
                 }
             });
+            if self.params.material != Material::Matte {
+                self.slider(ui, P::SurfaceAmount);
+            }
             }
             ui.separator();
 
@@ -2040,6 +2085,7 @@ impl App {
             let r = ui.checkbox(&mut self.params.palette_from_cover, "Colours from the album cover");
             self.describe(&r, "Take the colours from the cover of whatever track is playing, so each track has its own look: its two strongest colours from dark to bright, with a bass colour chosen to stand apart from them. The cover is read from Windows on this PC; nothing is sent anywhere. With nothing playing, or a player that shows no cover, the palette above is used.");
             }
+            self.slider(ui, P::PaletteDrift);
             self.slider(ui, P::Banding);
             self.slider(ui, P::Bloom);
             ui.horizontal(|ui| {

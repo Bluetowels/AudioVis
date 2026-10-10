@@ -27,7 +27,7 @@ struct Uniforms {
     // 3D camera position and the point it looks at (ground units; z is height)
     cam_eye: vec4<f32>,
     cam_target: vec4<f32>,
-    // seconds since the last frame, number of raindrops in use, unused, unused
+    // seconds since the last frame, number of raindrops in use, 3D material strength (0 matte .. 1 full), unused
     sim: vec4<f32>,
     // HDR output on (1) or off (0), base brightness and peak brightness in units of 80 nits, test pattern on (1)
     hdr: vec4<f32>,
@@ -486,8 +486,9 @@ fn relief_view(screen: vec2<f32>) -> vec3<f32> {
     let material = u.stereo.w;
     let present = smoothstep(0.02, 0.25, max(colour.r, max(colour.g, colour.b)));
     let glint = max(dot(normal, normalize(sun - ray)), 0.0);
+    let matte = colour * (0.55 + 0.75 * light);
     if (material < 0.5) {
-        colour *= 0.55 + 0.75 * light;
+        colour = matte;
     } else if (material < 1.5) {
         // Gloss: shiny plastic, with a white highlight where a slope catches the light.
         colour = colour * (0.50 + 0.70 * light) + vec3<f32>(0.75 * pow(glint, 48.0) * present);
@@ -501,6 +502,7 @@ fn relief_view(screen: vec2<f32>) -> vec3<f32> {
         let rim = pow(1.0 - max(dot(normal, -ray), 0.0), 3.0);
         colour = colour * (0.35 + 0.40 * light) + mix(colour, vec3<f32>(1.0), 0.7) * (0.85 * rim * present) + vec3<f32>(pow(glint, 200.0) * present);
     }
+    colour = mix(matte, colour, u.sim.z);
     if (u.relief.z > 0.0) { colour = wet(colour, hit.xy, h, slope); }
     colour *= exp(-0.22 * max(t_hit - distance, 0.0)) * (1.0 - smoothstep(0.5 * reach, 0.95 * reach, t_hit - t_start));
     return clamp(colour, vec3<f32>(0.0), vec3<f32>(1.0));

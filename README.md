@@ -280,6 +280,7 @@ Stereo position is averaged over about 150 ms and two semitones, so it's steadie
 | 3D flight look ahead | 0 | 0 to 1 | 0 looks at the centre; 1 looks along the flight path |
 | 3D storm | 0 | 0 to 1 | Raindrops that fall, splash on the surface and evaporate |
 | Surface | Matte | Matte, Gloss, Metal, Glass | What the surface looks as if it is made of |
+| Surface strength | 1.0 | 0 to 1 | How strongly the surface takes on that look; 0 is plain matte |
 
 The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low flights over a dense picture can drop below the display's refresh rate.
 
@@ -287,7 +288,8 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 
 | Setting | Default | Range | What it does |
 |---|---|---|---|
-| Palette | Ember | 22 palettes | Colours from quiet to loud |
+| Palette | Ember | 28 palettes | Colours from quiet to loud; 18 are smooth and 10 jump from colour to colour |
+| Palette drift | 0 s (off) | 0 to 120 | Above 0, the colours blend on from palette to palette, spending this many seconds on each |
 | Colours from the album cover | off | | Windows only: takes the palette from the cover of the track that is playing |
 | Colour banding | 0 | 0 to 1 | 0 blends smoothly; 1 gives hard-edged bands |
 | Reverse palette | off | | Swaps the palette end for end |
@@ -305,7 +307,7 @@ Windows only.
 | Setting | Default | Range | What it does |
 |---|---|---|---|
 | Show lyrics | off | | Shows the words of the song over the picture, in time with the music |
-| Place | Middle | Top, Middle, Bottom, Circle | Lines across the picture at that height, or round a circle about its middle |
+| Place | Bottom | Top, Middle, Bottom, Circle | Lines across the picture at that height, or round a circle about its middle |
 | Lyrics size | 5% of the picture's height | 2 to 12 | Height of the line being sung |
 | Lyrics strength | 0.4 | 0 to 1 | How much the words that aren't being sung show; low leaves them faint so the picture comes first |
 | Show the next line | on | | The line to come, small and dim, under the one being sung |
@@ -326,6 +328,8 @@ The words take their colours from the palette and are drawn faint, so they sit i
 The built-in font covers Latin, Greek and Cyrillic letters; lyrics in other scripts show as empty boxes.
 
 **Colours from the album cover.** With this ticked, each track gets its own palette: the cover's two strongest colours, from dark to bright, with a bass colour chosen to stand apart from them. A black and white cover gives a grey picture with a red bass. Colours fade across when the track changes. With nothing playing, or a player that shows no cover, the chosen palette is used.
+
+**Palette drift.** Smooth palettes drift through the other smooth ones in turn, and the abrupt ones (Rainbow, Zigzag, Candy, Contour, Harlequin, Circuit, Tropic, Glitch, Stained glass and Wasp) through each other, starting from the chosen palette. While a cover's colours are showing, they take over.
 
 **Background.** Black keeps the rule that silence is black. Stars is a field of stars that twinkle with the treble; flat, they drift slowly, and in 3D they surround the picture and move with the camera. Album cover is the playing track's cover, blurred and dim. Either only shows where the picture is dark.
 

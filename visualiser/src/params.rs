@@ -44,6 +44,8 @@ pub enum P {
     LyricsStrength,
     Bloom,
     BackdropAmount,
+    PaletteDrift,
+    SurfaceAmount,
 }
 
 pub struct Def {
@@ -73,8 +75,8 @@ const fn def(
     Def { id, key, name, unit, min, max, default, log, help }
 }
 
-pub const N_PARAMS: usize = 38;
-pub const N_PALETTES: usize = 22;
+pub const N_PARAMS: usize = 40;
+pub const N_PALETTES: usize = 28;
 
 pub const DEFS: [Def; N_PARAMS] = [
     def(P::Slope, "slope", "Slope", "dB/oct", -3.0, 3.0, 0.0, false, "Tilts the balance between bass and treble about the middle of the spectrum. 0 suits most music, because the analysis already treats each note equally. Positive brings out treble and negative brings out bass. The range is kept modest: a steeper tilt pushes most of the spectrum out of the brightness range and the picture goes dark."),
@@ -92,7 +94,7 @@ pub const DEFS: [Def; N_PARAMS] = [
     def(P::FreqLow, "freq_low", "Lowest frequency", "oct", 0.0, 8.0, 0.0, false, "The lowest frequency shown. Raise it to zoom in and leave out empty sub-bass."),
     def(P::FreqHigh, "freq_high", "Highest frequency", "oct", 1.0, 9.0, 9.0, false, "The highest frequency shown. Lower it to zoom in on the range where the music is."),
     def(P::Smoothing, "smoothing", "Smoothing between bins", "bins", 0.0, 6.0, 1.5, false, "Blurs neighbouring frequencies together. 0 keeps every stripe or ring sharp; higher gives broad, soft shapes."),
-    def(P::Palette, "palette", "Palette", "", 0.0, (N_PALETTES - 1) as f32, 0.0, false, "The colours used from quiet to loud. Most are smooth; Rainbow, Zigzag, Candy and Contour change colour abruptly. Also on the right-click menu of the picture."),
+    def(P::Palette, "palette", "Palette", "", 0.0, (N_PALETTES - 1) as f32, 0.0, false, "The colours used from quiet to loud. Most are smooth; Rainbow, Zigzag, Candy, Contour and the six at the end change colour abruptly. Also on the right-click menu of the picture."),
     def(P::Angular, "angular", "Circle: angular pattern", "", 0.0, 1.0, 0.5, false, "Circle view only. 0 is plain rings; higher runs a second frequency round the ring, like the cross view bent into a circle."),
     def(P::Banding, "banding", "Colour banding", "", 0.0, 1.0, 0.0, false, "0 blends smoothly between palette colours; 1 gives hard-edged bands."),
     def(P::BassWindow, "bass_window", "Bass window", "ms", 100.0, 1000.0, 200.0, true, "How much audio the lowest notes are measured over. Longer separates neighbouring bass notes better but they arrive later and linger; shorter is quicker and blurrier. 200 is the usual balance. Changes apply a moment after you stop moving it."),
@@ -115,6 +117,8 @@ pub const DEFS: [Def; N_PARAMS] = [
     def(P::LyricsStrength, "lyrics_strength", "Lyrics strength", "", 0.0, 1.0, 0.4, false, "How much the lyrics stand out from the picture. Low leaves the line faint, with only the word being sung coming forward; high makes every word solid, with a dark edge. The word being sung is always clear."),
     def(P::Bloom, "bloom", "Bloom", "", 0.0, 1.0, 0.3, false, "A soft glow that spreads from the bright parts of the picture, as if seen through a slightly misted lens. 0 is off and leaves every edge crisp."),
     def(P::BackdropAmount, "backdrop_amount", "Background brightness", "", 0.0, 1.0, 0.4, false, "How bright the background is. It only shows where the picture is dark, and is kept well below the picture so the music still stands out."),
+    def(P::PaletteDrift, "palette_drift", "Palette drift", "s", 0.0, 120.0, 0.0, false, "Above 0, the colours do not stay still: they blend slowly from the chosen palette to the next of its kind and on through the rest, spending this many seconds on each. Smooth palettes drift through the smooth ones, and the abrupt ones (Rainbow, Zigzag, Candy and the like) through each other. 0 keeps the chosen palette. Colours from the album cover take over while a cover is showing."),
+    def(P::SurfaceAmount, "surface_amount", "Surface strength", "", 0.0, 1.0, 1.0, false, "How strongly the 3D surface takes on the chosen look. 0 is plain matte; 1 is fully gloss, metal or glass."),
 ];
 
 pub fn def_of(id: P) -> &'static Def {
@@ -168,8 +172,8 @@ impl Mirror {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum LyricsPlace {
     Top,
-    #[default]
     Centre,
+    #[default]
     Bottom,
     /// Round a circle about the middle of the picture, scrolling.
     Circle,
@@ -344,7 +348,7 @@ impl Default for Params {
             bass_colour: None,
             surround_colour: Some([1.0, 0.0, 0.0]),
             lyrics_preview: true,
-            lyrics_place: LyricsPlace::Centre,
+            lyrics_place: LyricsPlace::Bottom,
             palette_from_cover: false,
             backdrop: Backdrop::Off,
             material: Material::Matte,
@@ -531,6 +535,12 @@ pub const SURROUND_COLOURS: [[f32; 3]; N_PALETTES] = [
     [0.20, 0.80, 1.00], // Copper
     [1.00, 0.65, 0.15], // Deep sea
     [0.55, 0.45, 1.00], // Peach
+    [1.00, 1.00, 1.00], // Harlequin
+    [1.00, 0.30, 0.70], // Circuit
+    [0.60, 0.40, 1.00], // Tropic
+    [1.00, 0.85, 0.20], // Glitch
+    [1.00, 1.00, 1.00], // Stained glass
+    [0.30, 0.90, 1.00], // Wasp
 ];
 
 pub const PALETTES: [Palette; N_PALETTES] = [
@@ -574,4 +584,35 @@ pub const PALETTES: [Palette; N_PALETTES] = [
     Palette { name: "Copper", stops: &[[0.12, 0.04, 0.02], [0.50, 0.20, 0.08], [0.90, 0.50, 0.28], [0.70, 0.95, 0.88]], accent: [0.15, 0.70, 1.00] },
     Palette { name: "Deep sea", stops: &[[0.00, 0.02, 0.12], [0.02, 0.12, 0.35], [0.05, 0.50, 0.55], [0.55, 1.00, 0.65]], accent: [1.00, 0.55, 0.10] },
     Palette { name: "Peach", stops: &[[0.25, 0.08, 0.10], [0.80, 0.30, 0.25], [1.00, 0.65, 0.45], [1.00, 0.95, 0.80]], accent: [0.30, 0.65, 1.00] },
+    // More that jump from colour to colour instead of blending along a gradient.
+    Palette {
+        name: "Harlequin",
+        stops: &[[0.80, 0.05, 0.10], [0.05, 0.05, 0.08], [0.95, 0.80, 0.10], [0.10, 0.10, 0.14], [0.10, 0.60, 0.25], [0.15, 0.15, 0.20], [0.20, 0.35, 0.95], [1.00, 1.00, 1.00]],
+        accent: [1.00, 0.30, 0.80],
+    },
+    Palette {
+        name: "Circuit",
+        stops: &[[0.00, 0.20, 0.10], [0.00, 0.55, 0.25], [0.05, 0.15, 0.10], [0.20, 0.95, 0.40], [0.00, 0.30, 0.30], [0.85, 0.75, 0.10], [0.10, 0.45, 0.20], [0.80, 1.00, 0.85]],
+        accent: [1.00, 0.35, 0.10],
+    },
+    Palette {
+        name: "Tropic",
+        stops: &[[0.00, 0.45, 0.50], [1.00, 0.35, 0.40], [0.10, 0.75, 0.30], [1.00, 0.75, 0.10], [0.00, 0.60, 0.85], [1.00, 0.20, 0.60], [0.55, 0.95, 0.20], [1.00, 0.98, 0.85]],
+        accent: [0.45, 0.25, 1.00],
+    },
+    Palette {
+        name: "Glitch",
+        stops: &[[0.00, 0.90, 0.90], [0.10, 0.00, 0.20], [1.00, 0.00, 0.60], [0.00, 0.10, 0.25], [0.00, 1.00, 0.45], [0.20, 0.00, 0.35], [1.00, 0.95, 0.00], [1.00, 1.00, 1.00]],
+        accent: [1.00, 0.25, 0.10],
+    },
+    Palette {
+        name: "Stained glass",
+        stops: &[[0.45, 0.05, 0.10], [0.05, 0.20, 0.55], [0.75, 0.50, 0.05], [0.05, 0.40, 0.25], [0.55, 0.10, 0.50], [0.10, 0.50, 0.70], [0.90, 0.30, 0.10], [1.00, 0.90, 0.60]],
+        accent: [0.40, 1.00, 0.60],
+    },
+    Palette {
+        name: "Wasp",
+        stops: &[[0.90, 0.70, 0.00], [0.06, 0.05, 0.02], [1.00, 0.80, 0.05], [0.10, 0.08, 0.03], [1.00, 0.88, 0.15], [0.14, 0.11, 0.04], [1.00, 0.94, 0.35], [1.00, 1.00, 0.85]],
+        accent: [0.20, 0.50, 1.00],
+    },
 ];

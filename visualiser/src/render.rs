@@ -74,7 +74,7 @@ pub struct Uniforms {
     pub relief: [f32; 4],
     pub cam_eye: [f32; 4],
     pub cam_target: [f32; 4],
-    /// Seconds since the last frame, number of raindrops in use, unused, unused.
+    /// Seconds since the last frame, number of raindrops in use, 3D material strength, unused.
     pub sim: [f32; 4],
     /// HDR on (1) or off (0), base and peak brightness in units of 80 nits, unused.
     pub hdr: [f32; 4],
