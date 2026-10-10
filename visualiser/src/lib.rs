@@ -535,6 +535,14 @@ struct App {
     star_travel: f32,
     /// How fast that flight is going, in sheets of stars passed each second.
     star_rate: f32,
+    /// Where the flight is heading, from the middle of the picture in picture
+    /// heights, and how far the stars have slid sideways in its turns.
+    star_heading: [f32; 2],
+    star_slide: [f32; 2],
+    /// Bass hits so far, each of which turns the flight a new way, and the
+    /// bass level last frame, to tell when a hit starts.
+    star_hits: u32,
+    star_bass_was: f32,
     /// Which cover the renderer was last given (by its address; 0 for none).
     cover_sent: usize,
     /// Whether the title and artist are shown as a track starts.
@@ -682,6 +690,10 @@ impl App {
             palette_drift: 0.0,
             star_travel: 0.0,
             star_rate: 0.0,
+            star_heading: [0.0; 2],
+            star_slide: [0.0; 2],
+            star_hits: 0,
+            star_bass_was: 0.0,
             cover_sent: 0,
             track_card,
             card: None,
@@ -1162,6 +1174,7 @@ impl App {
                 (self.hdr_active && self.hdr_pattern) as u8 as f32,
             ],
             post: [p.get(P::Bloom), if p.backdrop == Backdrop::Cover { 2.0 } else { 0.0 }, p.get(P::BackdropAmount), self.treble()],
+            star_turn: [self.star_heading[0], self.star_heading[1], self.star_slide[0], self.star_slide[1]],
             stars: [if p.stars { p.get(P::StarBrightness).max(1e-4) } else { 0.0 }, p.get(P::StarDensity), p.get(P::StarVariety), 0.0],
             stops,
         }
@@ -2128,7 +2141,7 @@ impl App {
             let r = ui.checkbox(&mut self.params.stars, "Show stars");
             self.describe(&r, "A field of stars behind the picture, showing where it is dark. They twinkle with the treble. Still, they drift slowly when the picture is flat, and in 3D they surround it and move with the camera. With a flight speed above 0 the view flies forward through them.");
             if self.params.stars {
-                for id in [P::StarBrightness, P::StarDensity, P::StarVariety, P::StarSpeed, P::StarBass] {
+                for id in [P::StarBrightness, P::StarDensity, P::StarVariety, P::StarSpeed, P::StarBass, P::StarTurn] {
                     self.slider(ui, id);
                 }
             }
@@ -2351,6 +2364,21 @@ impl eframe::App for App {
         let pace = if with_bass >= 0.0 { 1.0 + 4.0 * with_bass * self.bass_env } else { 1.0 + with_bass * self.bass_env };
         // The slider gathers pace as it goes up: 1 is a gentle drift, 6 over twenty times that.
         self.star_rate = 0.06 * star_speed * (1.0 + star_speed) * pace;
+        // Turns: each hit swings the heading a new way (successive hits are
+        // spread round the compass), as far as the hit is strong, and it
+        // straightens as the hit dies away. While it is off centre the stars
+        // slide across, faster the faster the flight.
+        if self.bass_env > 0.45 && self.star_bass_was <= 0.45 {
+            self.star_hits = self.star_hits.wrapping_add(1);
+        }
+        self.star_bass_was = self.bass_env;
+        let way = self.star_hits as f32 * 2.399_963;
+        let reach = 0.45 * self.params.get(P::StarTurn) * self.bass_env;
+        let ease = 1.0 - (-dt / 0.12).exp();
+        for (i, wanted) in [reach * way.cos(), reach * way.sin()].into_iter().enumerate() {
+            self.star_heading[i] += (wanted - self.star_heading[i]) * ease;
+            self.star_slide[i] = (self.star_slide[i] - 14.0 * self.star_heading[i] * self.star_rate * dt) % 4096.0;
+        }
         self.star_travel = if star_speed > 0.001 && self.params.stars { (self.star_travel + self.star_rate * dt) % 4096.0 + 1e-6 } else { 0.0 };
 
         if self.show_panel {

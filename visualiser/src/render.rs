@@ -82,6 +82,8 @@ pub struct Uniforms {
     pub post: [f32; 4],
     /// Stars: brightness (0 is off), how many, how much their sizes differ, unused.
     pub stars: [f32; 4],
+    /// Flight through the stars: where it is heading (xy) and how far the stars have slid in its turns (zw).
+    pub star_turn: [f32; 4],
     pub stops: [[f32; 4]; 9],
 }
 

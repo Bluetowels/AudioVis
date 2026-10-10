@@ -38,6 +38,9 @@ struct Uniforms {
     post: vec4<f32>,
     // stars: brightness (0 is off), how many (0..1), how much their sizes differ (0..1), unused
     stars: vec4<f32>,
+    // flight through the stars: where on the picture it is heading (xy, from the middle,
+    // in picture heights) and how far the stars have slid sideways in its turns (zw)
+    star_turn: vec4<f32>,
     // black, then up to eight colours from quiet to loud
     stops: array<vec4<f32>, 9>,
 };
@@ -575,8 +578,11 @@ fn starfield(p: vec2<f32>) -> f32 {
 // distances, each sheet comes steadily nearer, and as one passes the camera
 // it starts again in the far distance with a fresh scatter of stars, so the
 // flight never ends and never repeats on a beat.
-fn star_flight(p: vec2<f32>) -> f32 {
+fn star_flight(at: vec2<f32>) -> f32 {
     let time = u.relief.w;
+    // The stars stream out from the point the flight is heading for. In a
+    // turn that point swings away from the middle and the stars slide across.
+    let p = at - u.star_turn.xy;
     let sheets = 9;
     var light = 0.0;
     for (var i = 0; i < sheets; i++) {
@@ -585,7 +591,7 @@ fn star_flight(p: vec2<f32>) -> f32 {
         let lap = floor(travel);                 // how many times this sheet has come round
         // Far sheets are seen small, so their stars sit close together and
         // crawl; near ones spread out and rush past the edges.
-        let g = p * mix(34.0, 1.6, closeness * closeness) + vec2<f32>(f32(i) * 31.7 + lap * 13.1, f32(i) * 17.3 - lap * 7.9);
+        let g = p * mix(34.0, 1.6, closeness * closeness) + vec2<f32>(f32(i) * 31.7 + lap * 13.1, f32(i) * 17.3 - lap * 7.9) + u.star_turn.zw;
         let cell = floor(g);
         let rnd = hash(cell);
         let rare = 1.0 - mix(0.04, 0.52, u.stars.y);

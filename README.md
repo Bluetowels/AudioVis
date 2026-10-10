@@ -347,8 +347,9 @@ The cover, title and artist used here and by the track card come from Windows' m
 | Star size variety | 0.5 | 0 to 1 | 0 makes them all alike; at 1 most are small and a few are much larger and brighter |
 | Star flight speed | 0 | 0 to 6 | Above 0, the view flies forward through the stars without end; gentle up to about 1, and at speed the stars draw out into streaks |
 | Star flight bass | 0 | -1 to 1 | Above 0, each bass hit surges the flight forward; below 0, each hit holds it back |
+| Star flight turn | 0 | 0 to 1 | Above 0, each bass hit throws the flight into a turn, a different way each time |
 
-The stars twinkle with the treble. Still, they drift slowly when the picture is flat, and in 3D they surround it and move with the camera. With Star flight speed above 0 the view flies forward through them: they come up out of the distance and rush past the edges. The stars are worked out as they are needed, not stored, so the flight never ends or loops. Star flight bass ties its speed to the same bass as the bass pulse, up to five times the speed on a hit at 1, or down to a standstill at -1. Stars and the album cover background can be on together.
+The stars twinkle with the treble. Still, they drift slowly when the picture is flat, and in 3D they surround it and move with the camera. With Star flight speed above 0 the view flies forward through them: they come up out of the distance and rush past the edges. The stars are worked out as they are needed, not stored, so the flight never ends or loops. Star flight bass ties its speed to the same bass as the bass pulse, up to five times the speed on a hit at 1, or down to a standstill at -1. Star flight turn swings the point the stars stream from away from the middle on each hit, with the stars sliding across, and straightens up as the hit dies away. Stars and the album cover background can be on together.
 
 ### App
 
