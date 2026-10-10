@@ -620,6 +620,9 @@ struct App {
     /// A lyrics file the user picked to go with the audio file being played.
     #[cfg(target_os = "android")]
     picked_lyrics: Option<std::sync::Arc<[lyrics::Line]>>,
+    /// How many times setting up the screen had to be tried again, as last noted.
+    #[cfg(target_os = "android")]
+    surface_retries: u32,
 }
 
 impl App {
@@ -776,6 +779,8 @@ impl App {
             saved: (String::new(), Instant::now()),
             #[cfg(target_os = "android")]
             picked_lyrics: None,
+            #[cfg(target_os = "android")]
+            surface_retries: 0,
         }
     }
 
@@ -2746,6 +2751,14 @@ impl eframe::App for App {
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
         self.last_frame = Instant::now();
         self.frames += 1;
+        #[cfg(target_os = "android")]
+        {
+            let retries = eframe::egui_wgpu::SURFACE_RETRIES.load(std::sync::atomic::Ordering::Relaxed);
+            if retries != self.surface_retries {
+                self.surface_retries = retries;
+                android::progress(&format!("frame {}: setting up the screen has needed {retries} extra tries so far", self.frames));
+            }
+        }
         #[cfg(target_os = "android")]
         if matches!(self.frames, 1 | 2 | 10 | 100 | 1000) {
             android::progress(&format!("frame {} drawn, source {}", self.frames, self.capture.source.label()));

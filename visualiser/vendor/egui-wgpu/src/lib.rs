@@ -423,6 +423,10 @@ impl Default for WgpuConfiguration {
 /// nits, stored as the bits of an `f32`. The app updates it as its setting changes.
 pub static HDR_UI_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x4020_0000); // 2.5
 
+/// AudioVis: how many times configuring a surface has had to be tried again
+/// (Android only; see `configure_patiently` in winit.rs).
+pub static SURFACE_RETRIES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// AudioVis: the current [`HDR_UI_SCALE`].
 pub fn hdr_ui_scale() -> f32 {
     f32::from_bits(HDR_UI_SCALE.load(std::sync::atomic::Ordering::Relaxed))

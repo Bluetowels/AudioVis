@@ -133,6 +133,10 @@ impl Painter {
             surf_config.desired_maximum_frame_latency = desired_maximum_frame_latency;
         }
 
+        // AudioVis: on Android, configuring can fail for a moment; see below.
+        #[cfg(target_os = "android")]
+        configure_patiently(&surface_state.surface, &render_state.device, &surf_config);
+        #[cfg(not(target_os = "android"))]
         surface_state
             .surface
             .configure(&render_state.device, &surf_config);
@@ -797,4 +801,40 @@ impl Painter {
     pub fn destroy(&mut self) {
         // TODO(emilk): something here?
     }
+}
+
+/// AudioVis: configure a surface, trying again if the graphics chip has not
+/// finished its earlier work. wgpu refuses to configure a surface while
+/// work is still in hand ("Failed to wait for GPU to come idle"), and left
+/// alone that refusal closes the app. Some phones' drivers (seen on a
+/// PowerVR chip) report the work finished a moment late, so here the
+/// refusal is caught and the configuring tried again for up to a couple of
+/// seconds. If it still fails, the last try is made in the ordinary way, so
+/// the failure is reported as it always was.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn configure_patiently(
+    surface: &wgpu::Surface<'_>,
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+) {
+    use std::future::Future as _;
+
+    for attempt in 0..20u64 {
+        // Let the work already handed over finish.
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        surface.configure(device, config);
+        // Off the web the answer is ready at once, so one look is enough.
+        let answer = std::pin::pin!(scope.pop())
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        match answer {
+            std::task::Poll::Ready(Some(error)) => {
+                crate::SURFACE_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                log::warn!("Configuring the surface failed (try {}): {error}", attempt + 1);
+            }
+            _ => return,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10 * (attempt + 1)));
+    }
+    surface.configure(device, config);
 }
