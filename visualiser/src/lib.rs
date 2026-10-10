@@ -1849,7 +1849,20 @@ impl App {
             let address = std::sync::Arc::as_ptr(cover) as usize;
             if self.card_cover.as_ref().is_none_or(|(of, _)| *of != address) {
                 let side = nowplaying::COVER_SIZE as usize;
-                let pixels = cover.rgba.chunks_exact(4).map(|p| egui::Color32::from_rgb(p[0], p[1], p[2])).collect();
+                // The corners are rounded and the edges fade out over a little
+                // way, so it does not arrive as a hard-edged square.
+                let (round, soft) = (0.07, 0.05);
+                let pixels = cover
+                    .rgba
+                    .chunks_exact(4)
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let from_middle = |k: usize| (((k as f32 + 0.5) / side as f32 - 0.5).abs() - (0.5 - round)).max(0.0);
+                        let inside = round - from_middle(i % side).hypot(from_middle(i / side));
+                        let t = (inside / soft).clamp(0.0, 1.0);
+                        egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], (255.0 * t * t * (3.0 - 2.0 * t)) as u8)
+                    })
+                    .collect();
                 let image = egui::ColorImage::new([side, side], pixels);
                 self.card_cover = Some((address, painter.ctx().load_texture("cover", image, egui::TextureOptions::LINEAR)));
             }
