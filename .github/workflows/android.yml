@@ -118,5 +118,6 @@ jobs:
           name: AudioVis-Android-emulator
           path: |
             emulator.png
+            emulator-late.png
             emulator.txt
           if-no-files-found: warn
