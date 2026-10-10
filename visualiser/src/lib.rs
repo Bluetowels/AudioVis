@@ -1430,6 +1430,7 @@ impl App {
         let quiet = if tint.is_some() { (2.2 * strength).min(1.0) } else { 0.80 * strength };
         // At nothing, nothing shows at all, a word being sung included.
         let shown = (strength / 0.1).min(1.0);
+        let active = p.get(P::LyricsActive);
         // Brightness follows the bass. In HDR the words stay at the panel's
         // steady white, well under the picture's peaks.
         let bass = if p.bass_boost { self.bass_env } else { 0.0 };
@@ -1464,6 +1465,9 @@ impl App {
                     let over = if now < w.end { 1.0 } else { (-(now - w.end) / 0.12).exp() as f32 };
                     (begun * over, if now >= w.start { (-(now - w.start) / 0.22).exp() as f32 } else { 0.0 }, begun)
                 });
+                // How far it comes forward is set by Active line strength; past
+                // three-quarters the glow goes on growing.
+                let forward = forward * (active / 0.75).min(1.0);
                 let seen = opacity(middle) * dim * shown;
                 let rgb: [f32; 3] = std::array::from_fn(|i| mid[i] + (hot[i] - mid[i]) * forward);
                 // In a line with word times, the words still to come hang back a little.
@@ -1507,7 +1511,7 @@ impl App {
                     for k in 0..16 {
                         let (sin, cos) = (k as f32 * std::f32::consts::TAU / 8.0 + 0.4 * (k / 8) as f32).sin_cos();
                         let reach = halo * if k < 8 { 1.0 } else { 0.5 };
-                        add(&mut glow, egui::vec2(cos, sin) * reach, &|corner| colour(hot, 0.06 * corner.3));
+                        add(&mut glow, egui::vec2(cos, sin) * reach, &|corner| colour(hot, 0.06 * (active / 0.75).max(1.0) * corner.3));
                     }
                 }
             }
@@ -1544,7 +1548,7 @@ impl App {
             let galley = painter.layout_job(job);
             let height = galley.size().y;
             let origin = egui::vec2(picture.center().x, y - anchor * height);
-            let words = timed.map(|next_start| lyric_words(&galley, line, next_start)).unwrap_or_default();
+            let words = timed.map(|next_start| active_words(&galley, line, next_start)).unwrap_or_default();
             let dim = if timed.is_some() { 1.0 } else { 0.7 };
             self.lyric_text(painter, &galley, &words, now, size, dim, None, &|_, at| Some(at + origin), &|_| opacity);
             height
@@ -1659,18 +1663,9 @@ impl App {
         };
 
         // The line being sung stands out the way a word being sung does: it
-        // lifts, turns pale and bright, and glows. Lyrics that time every
-        // word pick out the word instead.
-        let mut words = lyric_words(&galley, &lines[current], next_start);
-        if words.is_empty() {
-            let until = lines[current].start + until_next;
-            words = galley
-                .rows
-                .iter()
-                .enumerate()
-                .map(|(r, row)| LyricWord { start: lines[current].start, end: until, row: r, left: row.pos.x - 1.0, right: row.pos.x + row.size.x + 1.0 })
-                .collect();
-        }
+        // lifts, turns pale and bright, and glows; the lines round it are dimmed.
+        let words = active_words(&galley, &lines[current], next_start);
+        let others = 1.0 - 0.65 * self.params.get(P::LyricsActive);
         draw(&galley, &fit, &words, 0.0, 1.0);
         // The lines already sung, further up the page and further away.
         let mut down = 0.0;
@@ -1680,7 +1675,7 @@ impl App {
             if READING + (rolled - down - fit.height) / stretch > FADE.1 {
                 break;
             }
-            draw(&galley, &fit, &[], down, 0.5);
+            draw(&galley, &fit, &[], down, others);
         }
         // The lines to come, lower down and nearer, until they are off the bottom.
         let mut down = fit.height + gap;
@@ -1689,7 +1684,7 @@ impl App {
                 break;
             }
             let (galley, fit) = layout(later);
-            draw(&galley, &fit, &[], down, 0.5);
+            draw(&galley, &fit, &[], down, others);
             down += fit.height + gap;
         }
     }
@@ -1781,14 +1776,15 @@ impl App {
         let galley = layout(line);
         let whole = galley.size().x;
         let next_start = lines.get(current + 1).map_or(f64::MAX, |next| next.start);
-        let words = lyric_words(&galley, line, next_start);
+        let timed = lyric_words(&galley, line, next_start);
+        let words = active_words(&galley, line, next_start);
 
         // How far the line has moved past the top. It crosses in about the
         // time it takes to sing, then the next line waits there for its turn.
         // With word timings, each word reaches the top as it is sung.
         let mut marks = vec![(line.start, 0.0)];
-        marks.extend(words.iter().map(|w| (w.start, w.left)));
-        let end = words.last().map_or(line.start + (0.15 * line.text.chars().count() as f64).max(2.0), |w| w.end);
+        marks.extend(timed.iter().map(|w| (w.start, w.left)));
+        let end = timed.last().map_or(line.start + (0.15 * line.text.chars().count() as f64).max(2.0), |w| w.end);
         marks.push((end.min(next_start), whole + gap));
         let mut moved = whole + gap;
         for pair in marks.windows(2) {
@@ -2406,6 +2402,7 @@ impl App {
                 }
                 self.slider(ui, P::LyricsSize);
                 self.slider(ui, P::LyricsStrength);
+                self.slider(ui, P::LyricsActive);
                 let r = ui.checkbox(&mut self.params.lyrics_preview, "Show the next line");
                 self.describe(&r, "Show the line to come, small and dim, under the one being sung.");
                 self.slider(ui, P::LyricsOffset);
@@ -2484,6 +2481,23 @@ fn crawl_font(ctx: &egui::Context) {
     }
     fonts.families.insert(egui::FontFamily::Name(CRAWL_FONT.into()), family);
     ctx.set_fonts(fonts);
+}
+
+/// What stands out in the line being sung: the word being sung, where the
+/// lyrics time every word, and otherwise the whole line, a row at a time.
+fn active_words(galley: &egui::Galley, line: &lyrics::Line, next_start: f64) -> Vec<LyricWord> {
+    let words = lyric_words(galley, line, next_start);
+    if !words.is_empty() {
+        return words;
+    }
+    // A line with a long wait after it stops standing out after a few seconds.
+    let end = next_start.min(line.start + 6.0);
+    galley
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(r, row)| LyricWord { start: line.start, end, row: r, left: row.pos.x - 1.0, right: row.pos.x + row.size.x + 1.0 })
+        .collect()
 }
 
 /// How one row of laid-out text is moved to fill a block: made larger or

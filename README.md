@@ -312,6 +312,7 @@ Windows only.
 | Justify the crawl | off | | Crawl only: makes every row the same width, as a film's opening crawl is |
 | Lyrics size | 5% of the picture's height | 2 to 12 | Height of the line being sung |
 | Lyrics strength | 0.4 | 0 to 1 | How much the lyrics show: 0 hides them altogether, low leaves them faint so the picture comes first, high makes them solid |
+| Active line strength | 0.5 | 0 to 1 | How much the line being sung stands out from the other lyrics: 0 draws it like the rest; higher makes it paler, more solid and glowing, and in the crawl dims the lines round it |
 | Show the next line | on | | The line to come, small and dim, under the one being sung |
 | Lyrics sync offset | 0 ms | -1000 to 1000, in steps of 10 | Moves the lyrics earlier (negative) or later (positive); kept separately for each music app |
 
