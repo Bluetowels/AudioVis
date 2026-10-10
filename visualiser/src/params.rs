@@ -341,6 +341,8 @@ pub struct Params {
     /// Lyrics: show the line to come, small, under the one being sung.
     pub lyrics_preview: bool,
     pub lyrics_place: LyricsPlace,
+    /// Crawl: make every row the full width of the block.
+    pub lyrics_justify: bool,
     /// Take the colours from the cover of the track that is playing.
     pub palette_from_cover: bool,
     pub backdrop: Backdrop,
@@ -369,6 +371,7 @@ impl Default for Params {
             surround_colour: Some([1.0, 0.0, 0.0]),
             lyrics_preview: true,
             lyrics_place: LyricsPlace::Bottom,
+            lyrics_justify: false,
             palette_from_cover: false,
             backdrop: Backdrop::Off,
             stars: false,
@@ -448,6 +451,7 @@ impl Params {
             surround_colour: self.surround_colour,
             lyrics_preview: self.lyrics_preview,
             lyrics_place: self.lyrics_place,
+            lyrics_justify: self.lyrics_justify,
             palette_from_cover: self.palette_from_cover,
             backdrop: self.backdrop,
             stars: self.stars,
@@ -471,6 +475,7 @@ impl Params {
             surround_colour: saved.surround_colour,
             lyrics_preview: saved.lyrics_preview,
             lyrics_place: saved.lyrics_place,
+            lyrics_justify: saved.lyrics_justify,
             palette_from_cover: saved.palette_from_cover,
             backdrop: saved.backdrop,
             stars: saved.stars,
@@ -522,6 +527,8 @@ pub struct SavedParams {
     pub lyrics_preview: bool,
     #[serde(default)]
     pub lyrics_place: LyricsPlace,
+    #[serde(default)]
+    pub lyrics_justify: bool,
     #[serde(default)]
     pub palette_from_cover: bool,
     #[serde(default)]

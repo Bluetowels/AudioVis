@@ -175,6 +175,7 @@ struct Options {
     lyrics: bool,
     /// Where to draw them on this run.
     lyrics_place: Option<LyricsPlace>,
+    lyrics_justify: bool,
     /// Self-test: colours from the cover, a background and a 3D material.
     cover_colours: bool,
     track_card: bool,
@@ -211,6 +212,7 @@ impl Default for Options {
             demo_hint: None,
             lyrics: false,
             lyrics_place: None,
+            lyrics_justify: false,
             cover_colours: false,
             track_card: false,
             track_card_fly: false,
@@ -254,6 +256,7 @@ fn parse_options() -> Options {
             "--underlay" => o.underlay = true,
             "--show-hint" => o.demo_hint = args.next(),
             "--lyrics" => o.lyrics = true,
+            "--lyrics-justify" => o.lyrics_justify = true,
             // Self-test helpers for the switches that are not sliders.
             "--cover-colours" => o.cover_colours = true,
             "--track-card" => o.track_card = true,
@@ -642,6 +645,7 @@ impl App {
             params.lyrics_place = place;
         }
         params.palette_from_cover |= options.cover_colours;
+        params.lyrics_justify |= options.lyrics_justify;
         params.stars |= options.stars;
         params.backdrop = options.backdrop.unwrap_or(params.backdrop);
         params.material = options.material.unwrap_or(params.material);
@@ -1399,7 +1403,7 @@ impl App {
     }
 
     /// Draw laid-out lyrics with every letter moved to where `place` puts it
-    /// (given its position in the layout) and faded by `opacity`. With
+    /// (given the middle of the letter and the corner in question, both as laid out) and faded by `opacity`. With
     /// `words` (lyrics that time every word), the word being sung comes forward: it swells, lifts, takes
     /// the bright colour and glows, then settles back as the next one starts.
     #[allow(clippy::too_many_arguments)]
@@ -1412,7 +1416,7 @@ impl App {
         size: f32,
         dim: f32,
         tint: Option<[f32; 3]>,
-        place: &dyn Fn(egui::Pos2) -> Option<egui::Pos2>,
+        place: &dyn Fn(egui::Pos2, egui::Pos2) -> Option<egui::Pos2>,
         opacity: &dyn Fn(egui::Pos2) -> f32,
     ) {
         let p = &self.params;
@@ -1474,11 +1478,11 @@ impl App {
                         let wider = swell.min(1.0 + 0.12 * size / (w.right - w.left).max(1.0));
                         at = egui::pos2(centre + (at.x - centre) * wider, foot + (at.y - foot) * swell - 0.06 * size * forward);
                     }
-                    corners.push(if seen > 0.0 { place(at).map(|at| (at, text, 0.75 * strength * seen, forward * seen)) } else { None });
+                    corners.push(if seen > 0.0 { place(middle, at).map(|at| (at, text, 0.75 * strength * seen, forward * seen)) } else { None });
                 }
             }
             let d = (size * 0.045).max(1.0);
-            let halo = size * 0.07 * (1.0 + bass);
+            let halo = size * 0.035 * (1.0 + bass);
             for triangle in source.indices.chunks_exact(3) {
                 let [Some(a), Some(b), Some(c)] = [0, 1, 2].map(|k| corners[triangle[k] as usize]) else { continue };
                 let uv = |k: usize| {
@@ -1499,9 +1503,11 @@ impl App {
                 }
                 // The word being sung has a halo in its own colour, which swells with the bass.
                 if a.3 > 0.03 {
-                    for k in 0..8 {
-                        let (sin, cos) = (k as f32 * std::f32::consts::TAU / 8.0).sin_cos();
-                        add(&mut glow, egui::vec2(cos, sin) * halo, &|corner| colour(hot, 0.10 * corner.3));
+                    // Two rings of faint copies, close enough together to read as a soft edge.
+                    for k in 0..16 {
+                        let (sin, cos) = (k as f32 * std::f32::consts::TAU / 8.0 + 0.4 * (k / 8) as f32).sin_cos();
+                        let reach = halo * if k < 8 { 1.0 } else { 0.5 };
+                        add(&mut glow, egui::vec2(cos, sin) * reach, &|corner| colour(hot, 0.06 * corner.3));
                     }
                 }
             }
@@ -1540,7 +1546,7 @@ impl App {
             let origin = egui::vec2(picture.center().x, y - anchor * height);
             let words = timed.map(|next_start| lyric_words(&galley, line, next_start)).unwrap_or_default();
             let dim = if timed.is_some() { 1.0 } else { 0.7 };
-            self.lyric_text(painter, &galley, &words, now, size, dim, None, &|at| Some(at + origin), &|_| opacity);
+            self.lyric_text(painter, &galley, &words, now, size, dim, None, &|_, at| Some(at + origin), &|_| opacity);
             height
         };
 
@@ -1589,12 +1595,28 @@ impl App {
         // Text at the bottom edge is drawn this size; it shrinks with distance.
         let near_size = (1.7 * size * 2.0).round() / 2.0;
         let font = egui::FontId::new(near_size, egui::FontFamily::Name(CRAWL_FONT.into()));
+        let block = 0.8 * picture.width();
+        let justify = self.params.lyrics_justify;
         let layout = |line: &lyrics::Line| {
-            let mut job = egui::text::LayoutJob::default();
-            job.wrap.max_width = 0.8 * picture.width();
-            job.halign = egui::Align::Center;
-            job.append(&line.text, 0.0, egui::TextFormat { font_id: font.clone(), color: egui::Color32::WHITE, ..Default::default() });
-            painter.layout_job(job)
+            let set = |wrap: f32| {
+                let mut job = egui::text::LayoutJob::default();
+                job.wrap.max_width = wrap;
+                job.halign = egui::Align::Center;
+                job.append(&line.text, 0.0, egui::TextFormat { font_id: font.clone(), color: egui::Color32::WHITE, ..Default::default() });
+                painter.layout_job(job)
+            };
+            if !justify {
+                let galley = set(block);
+                let fit = Fit::of(&galley, None, near_size);
+                return (galley, fit);
+            }
+            // Justified, a line is broken into rows of about equal length,
+            // few enough that none has to be shrunk far to fit the block.
+            let whole = set(f32::INFINITY);
+            let rows = (0.8 * whole.size().x / block).ceil().max(1.0);
+            let galley = if rows > 1.0 { set(1.08 * whole.size().x / rows) } else { whole };
+            let fit = Fit::of(&galley, Some(block), near_size);
+            (galley, fit)
         };
         let gap = 0.45 * near_size;
         // Everything rolls away from a point above the top of the picture.
@@ -1610,13 +1632,13 @@ impl App {
         // How far the page has rolled past the top of the current line: by one
         // line and its gap in the time until the next line starts (or a few
         // seconds, where the next is a long way off).
-        let galley = layout(&lines[current]);
+        let (galley, fit) = layout(&lines[current]);
         let next_start = lines.get(current + 1).map_or(f64::MAX, |line| line.start);
         let until_next = (next_start - lines[current].start).clamp(0.3, 6.0);
-        let rolled = (galley.size().y + gap) * ((now - lines[current].start) / until_next).clamp(0.0, 1.0) as f32;
+        let rolled = (fit.height + gap) * ((now - lines[current].start) / until_next).clamp(0.0, 1.0) as f32;
 
         // Draw a line whose top is `down` the page from the top of the current one.
-        let draw = |galley: &egui::Galley, words: &[LyricWord], down: f32, dim: f32, colour: [f32; 3]| {
+        let draw = |galley: &egui::Galley, fit: &Fit, words: &[LyricWord], down: f32, dim: f32| {
             let distance = |y: f32| READING + (rolled - (down + y)) / stretch;
             self.lyric_text(
                 painter,
@@ -1625,40 +1647,50 @@ impl App {
                 now,
                 near_size,
                 dim,
-                Some(colour),
-                &|at| {
-                    let away = distance(at.y);
+                Some(YELLOW),
+                &|middle, at| {
+                    let on_page = fit.place(middle, at);
+                    let away = distance(on_page.y);
                     // Nearer than this it is off the bottom of the picture anyway.
-                    (away > 0.6).then(|| egui::pos2(picture.center().x + at.x / away, horizon + fall / away))
+                    (away > 0.6).then(|| egui::pos2(picture.center().x + on_page.x / away, horizon + fall / away))
                 },
-                &|at| 1.0 - smooth((distance(at.y) - FADE.0) / (FADE.1 - FADE.0)),
+                &|middle| 1.0 - smooth((distance(fit.place(middle, middle).y) - FADE.0) / (FADE.1 - FADE.0)),
             );
         };
 
-        // The line being sung is solid and a shade paler than the rest, and
-        // eases back to their colour as it rolls away.
-        let sung = 1.0 - smooth(rolled / (galley.size().y + gap));
-        let paler = YELLOW.map(|v| v + (1.0 - v) * 0.45 * sung);
-        draw(&galley, &lyric_words(&galley, &lines[current], next_start), 0.0, 0.62 + 0.38 * sung.max(0.35), paler);
+        // The line being sung stands out the way a word being sung does: it
+        // lifts, turns pale and bright, and glows. Lyrics that time every
+        // word pick out the word instead.
+        let mut words = lyric_words(&galley, &lines[current], next_start);
+        if words.is_empty() {
+            let until = lines[current].start + until_next;
+            words = galley
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(r, row)| LyricWord { start: lines[current].start, end: until, row: r, left: row.pos.x - 1.0, right: row.pos.x + row.size.x + 1.0 })
+                .collect();
+        }
+        draw(&galley, &fit, &words, 0.0, 1.0);
         // The lines already sung, further up the page and further away.
         let mut down = 0.0;
         for earlier in lines[..current].iter().rev() {
-            let galley = layout(earlier);
-            down -= galley.size().y + gap;
-            if READING + (rolled - down - galley.size().y) / stretch > FADE.1 {
+            let (galley, fit) = layout(earlier);
+            down -= fit.height + gap;
+            if READING + (rolled - down - fit.height) / stretch > FADE.1 {
                 break;
             }
-            draw(&galley, &[], down, 0.62, YELLOW);
+            draw(&galley, &fit, &[], down, 0.5);
         }
         // The lines to come, lower down and nearer, until they are off the bottom.
-        let mut down = galley.size().y + gap;
+        let mut down = fit.height + gap;
         for later in &lines[current + 1..] {
             if READING + (rolled - down) / stretch < 0.9 {
                 break;
             }
-            let galley = layout(later);
-            draw(&galley, &[], down, 0.62, YELLOW);
-            down += galley.size().y + gap;
+            let (galley, fit) = layout(later);
+            draw(&galley, &fit, &[], down, 0.5);
+            down += fit.height + gap;
         }
     }
 
@@ -1732,7 +1764,7 @@ impl App {
                 size,
                 dim,
                 None,
-                &|at| on_picture((x + at.x) / radius, radius + tall - at.y),
+                &|_, at| on_picture((x + at.x) / radius, radius + tall - at.y),
                 &|at| 1.0 - smooth((((x + at.x) / radius).abs().to_degrees() - FADE.0) / (FADE.1 - FADE.0)),
             );
         };
@@ -2368,6 +2400,10 @@ impl App {
                         self.describe(&r, "Where the lyrics go. Top, Middle and Bottom show the line being sung across the picture, with the line before fading out above it and the line to come below. Circle runs them round the far side of a circle about the middle of the picture, scrolling past the top as they are sung; in 3D they lie on the picture and tilt and turn with it. Crawl lays them back in yellow like the opening titles of a space film: they come in at the bottom and roll away up the picture into the distance.");
                     }
                 });
+                if self.params.lyrics_place == LyricsPlace::Crawl {
+                    let r = ui.checkbox(&mut self.params.lyrics_justify, "Justify the crawl");
+                    self.describe(&r, "Make every row of the crawl the same width, as the text of a film's opening crawl is. Each line is made larger or smaller to fill the width, a long one is broken into even rows, and what is left is taken up between the words and letters. A very short line is only stretched so far, and then sits in the middle.");
+                }
                 self.slider(ui, P::LyricsSize);
                 self.slider(ui, P::LyricsStrength);
                 let r = ui.checkbox(&mut self.params.lyrics_preview, "Show the next line");
@@ -2448,6 +2484,84 @@ fn crawl_font(ctx: &egui::Context) {
     }
     fonts.families.insert(egui::FontFamily::Name(CRAWL_FONT.into()), family);
     ctx.set_fonts(fonts);
+}
+
+/// How one row of laid-out text is moved to fill a block: made larger or
+/// smaller, then its words and letters spread to take up what is left.
+struct RowFit {
+    /// The row's top and left as laid out, and after fitting.
+    top: f32,
+    left: f32,
+    new_top: f32,
+    new_left: f32,
+    scale: f32,
+    /// Extra width shared out along the row.
+    slack: f32,
+    /// Each letter's left edge as laid out, and the share of the slack before it.
+    stops: Vec<(f32, f32)>,
+}
+
+/// How laid-out text is fitted to a block. Justified, every row is the full
+/// width of the block, like the text of a film's opening crawl.
+struct Fit {
+    rows: Vec<RowFit>,
+    height: f32,
+}
+
+impl Fit {
+    /// Fit `galley` (laid out centred) to a block `width` wide, or with no
+    /// width leave it exactly as it is. `size` is the size of its type.
+    fn of(galley: &egui::Galley, width: Option<f32>, size: f32) -> Self {
+        /// A row is made at most this much smaller or larger to fit.
+        const SCALE: (f32, f32) = (0.7, 1.6);
+        let mut rows = Vec::new();
+        let mut new_top = 0.0;
+        for (r, row) in galley.rows.iter().enumerate() {
+            let top = row.pos.y;
+            let tall = galley.rows.get(r + 1).map_or(galley.size().y, |next| next.pos.y) - top;
+            // The row from its first letter to its last, leaving out spaces at the ends.
+            let inked: Vec<usize> = (0..row.glyphs.len()).filter(|i| !row.glyphs[*i].chr.is_whitespace()).collect();
+            let (Some(&first), Some(&last), Some(width)) = (inked.first(), inked.last(), width) else {
+                rows.push(RowFit { top, left: 0.0, new_top: top, new_left: 0.0, scale: 1.0, slack: 0.0, stops: Vec::new() });
+                new_top = top + tall;
+                continue;
+            };
+            let left = row.pos.x + row.glyphs[first].pos.x;
+            let right = row.pos.x + row.glyphs[last].pos.x + row.glyphs[last].advance_width;
+            let scale = (width / (right - left).max(1.0)).clamp(SCALE.0, SCALE.1);
+            let used = (right - left) * scale;
+            // What is left over goes between the words first and the letters
+            // second, and only so far: a very short line stays short of the
+            // edges and centred instead of being pulled apart.
+            let share = |i: usize| if row.glyphs[i].chr.is_whitespace() { 5.0 } else { 1.0 };
+            let total: f32 = (first..last).map(share).sum();
+            let most = (first..last).map(|i| if row.glyphs[i].chr.is_whitespace() { 1.0 } else { 0.09 }).sum::<f32>() * size * scale;
+            let slack = (width - used).clamp(0.0, most);
+            let mut before = 0.0;
+            let stops = (0..row.glyphs.len())
+                .map(|i| {
+                    let stop = (row.pos.x + row.glyphs[i].pos.x, if total > 0.0 { (before / total).min(1.0) } else { 0.0 });
+                    if (first..last).contains(&i) {
+                        before += share(i);
+                    }
+                    stop
+                })
+                .collect();
+            rows.push(RowFit { top, left, new_top, new_left: -0.5 * (used + slack), scale, slack, stops });
+            new_top += tall * scale;
+        }
+        Self { rows, height: new_top }
+    }
+
+    /// Where a corner `at` of the letter whose middle is `middle` goes.
+    fn place(&self, middle: egui::Pos2, at: egui::Pos2) -> egui::Pos2 {
+        let Some(row) = self.rows.iter().rev().find(|row| row.top <= middle.y).or(self.rows.first()) else { return at };
+        if row.stops.is_empty() {
+            return at;
+        }
+        let share = row.stops.iter().rev().find(|(left, _)| *left <= middle.x).map_or(0.0, |(_, share)| *share);
+        egui::pos2(row.new_left + (at.x - row.left) * row.scale + row.slack * share, row.new_top + (at.y - row.top) * row.scale)
+    }
 }
 
 /// The colours of the palette chosen in the panel.

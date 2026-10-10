@@ -309,6 +309,7 @@ Windows only.
 |---|---|---|---|
 | Show lyrics | off | | Shows the words of the song over the picture, in time with the music |
 | Place | Bottom | Top, Middle, Bottom, Circle, Crawl | Lines across the picture at that height, round a circle about its middle, or rolling away into the distance |
+| Justify the crawl | off | | Crawl only: makes every row the same width, as a film's opening crawl is |
 | Lyrics size | 5% of the picture's height | 2 to 12 | Height of the line being sung |
 | Lyrics strength | 0.4 | 0 to 1 | How much the lyrics show: 0 hides them altogether, low leaves them faint so the picture comes first, high makes them solid |
 | Show the next line | on | | The line to come, small and dim, under the one being sung |
@@ -318,7 +319,7 @@ With Top, Middle or Bottom, the line being sung runs across the picture at that 
 
 With Circle, the lyrics run round a circle about the middle of the picture and scroll, each line passing the top while it's sung; earlier lines move away to the left and the lines to come arrive from the right. In 3D the words lie on the picture, on the far side of the circle from the camera, so they tilt, turn and fly with it; steep tilts make them small, and Lyrics size makes up for it. "Show the next line" has no effect there.
 
-With Crawl, the lyrics are laid back on a plane like the opening titles of a space film: yellow, coming in at the bottom of the picture and rolling away up it into the distance, with the line being sung at an easy distance to read. It goes well with the stars. The typeface is a bold gothic read from the system's own fonts (Franklin Gothic Medium on Windows), which is close to the film's but not the same; no typeface is shipped with the app.
+With Crawl, the lyrics are laid back on a plane like the opening titles of a space film: yellow, coming in at the bottom of the picture and rolling away up it into the distance, with the line being sung near the bottom, bright and glowing, and the rest dimmer and fading as they recede. It goes well with the stars. With Justify the crawl ticked, each line is made larger or smaller to fill the width, a long one is broken into even rows, and what is left is taken up between the words and letters; a very short line is only stretched so far and then sits in the middle. The typeface is a bold gothic read from the system's own fonts (Franklin Gothic Medium on Windows), which is close to the film's but not the same; no typeface is shipped with the app.
 
 The words take their colours from the palette and are drawn faint, so they sit in the picture instead of over it. Where the lyrics have a time for every word, the word being sung comes forward: it swells, lifts, turns bright and glows, with the glow following the bass, then settles back as the next word starts. Most lyrics on LRCLIB only time whole lines, and those are shown a line at a time with no word picked out. In HDR the words stay at the base brightness.
 
