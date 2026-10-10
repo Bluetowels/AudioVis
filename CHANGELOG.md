@@ -1,14 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-10)
 
-- **More colour.** Eighteen new palettes, six of them abrupt like Candy and Zigzag; palette drift, which blends slowly from one palette to the next; and on Windows the palette can be taken from the cover of the track that is playing.
-- **Bloom.** A soft glow round the bright parts of the picture, on by default at a low setting.
-- **Backgrounds.** Stars that twinkle with the treble and move with the 3D camera, with an endless flight through them that can surge or slow with the bass, or the playing track's cover, blurred and dim. Off by default.
-- **3D surfaces.** Gloss, metal and glass, with highlights that move as the camera does, and a strength slider.
-- **Track card (Windows).** Title, artist, album and cover for a few seconds as each track starts.
-- **Lyrics (Windows).** The words of the song can be shown over the picture in time with the music: the line being sung in the middle, the line before fading out and the line to come below. The track is read from Windows' media controls and the lyrics come from LRCLIB. Off by default, because turning it on sends the title and artist of what you play to lrclib.net. The words take the palette's colours and stay faint; where the lyrics time every word, the word being sung swells and glows. They can sit at the top, middle or bottom, or run round a circle that follows the 3D view. Size, strength, next-line preview and a per-app sync offset are adjustable, and the controller's marker buttons turn lyrics on and off and nudge the offset.
+Everything new here is for Windows unless it says otherwise; the macOS and Android builds gain the parts that don't depend on knowing what is playing.
 
+- **Lyrics (Windows).** The words of the song over the picture, in time with the music. The track is read from Windows' media controls and time-synced lyrics come from LRCLIB. Off by default, because turning it on sends the title and artist of what you play to lrclib.net. They can sit at the top, middle or bottom, run round a circle that follows the 3D view, or roll away into the distance as a yellow crawl, optionally justified. The words take the palette's colours; sliders set how much they show and how much the line being sung stands out. Size, next-line preview and a sync offset kept per music app are adjustable.
+- **Track card (Windows).** Title, artist, album and cover in the corner for a few seconds as each track starts, or flown in from the distance. F5, or the controller's PLAY button, flies it in on demand.
+- **Colours from the album cover (Windows).** The palette can be taken from the cover of the track that is playing.
+- **More palettes, all systems.** Eighteen new ones, six of them abrupt like Candy and Zigzag, making 28. Palette drift blends slowly from one palette to the next.
+- **Bloom, all systems.** A soft glow round the bright parts of the picture, on by default at a low setting.
+- **Starfield, all systems.** Stars behind the picture that twinkle with the treble and move with the 3D camera, with settings for brightness, density and variety of size. They can be flown through without end, at anything from a drift to streaks, and the flight can surge, slow or turn with the bass. Off by default.
+- **Album cover background (Windows).** The playing track's cover, blurred and dim, behind the picture.
+- **3D surfaces, all systems.** Gloss, metal and glass, with highlights that move as the camera does, and a strength slider.
+- **Controller.** The marker buttons turn lyrics on and off and nudge the sync offset.
 ## 0.3.0 (2026-10-09)
 
 - **macOS (experimental).** The app builds for macOS 14.6 or later as a universal app in a disk image. It draws with Metal and captures system audio with a Core Audio tap. Windows behaviour is unchanged.
