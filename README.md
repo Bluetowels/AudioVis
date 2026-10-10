@@ -296,7 +296,7 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 | Bloom | 0.3 | 0 to 1 | A soft glow that spreads from the bright parts of the picture; 0 is off |
 | Background | Black | Black, Stars, Album cover | What shows where the picture is dark |
 | Background brightness | 0.4 | 0 to 1 | How bright the stars or cover are |
-| Star flight speed | 0 | 0 to 2 | Stars background: above 0, the view flies forward through the stars without end |
+| Star flight speed | 0 | 0 to 6 | Stars background: above 0, the view flies forward through the stars without end; gentle up to about 1, and at speed the stars draw out into streaks |
 | Star flight bass | 0 | -1 to 1 | Above 0, each bass hit surges the flight forward; below 0, each hit holds it back |
 | HDR base brightness | 200 nits | 80 to 500 | HDR only: how bright ordinary parts of the picture and the panel are |
 | HDR peak brightness | 1000 nits | 200 to 2000 | HDR only: how bright the very loudest parts go |

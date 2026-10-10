@@ -530,6 +530,8 @@ struct App {
     palette_drift: f32,
     /// How far the flight through the stars has gone; 0 when it is off.
     star_travel: f32,
+    /// How fast that flight is going, in sheets of stars passed each second.
+    star_rate: f32,
     /// Which cover the renderer was last given (by its address; 0 for none).
     cover_sent: usize,
     /// Whether the title and artist are shown as a track starts.
@@ -675,6 +677,7 @@ impl App {
             cover_look: None,
             palette_drift: 0.0,
             star_travel: 0.0,
+            star_rate: 0.0,
             cover_sent: 0,
             track_card,
             card: None,
@@ -1145,7 +1148,7 @@ impl App {
                 p.get(P::Storm),
                 self.started.elapsed().as_secs_f32() % 3600.0,
             ],
-            cam_eye: [eye[0], eye[1], eye[2], 0.0],
+            cam_eye: [eye[0], eye[1], eye[2], (3.0 * (self.star_rate - 0.3)).clamp(0.0, 4.0)],
             cam_target: [target[0], target[1], target[2], 0.0],
             sim: [self.frame_dt, (p.get(P::Storm) * render::MAX_DROPS as f32).floor(), p.get(P::SurfaceAmount), self.star_travel],
             hdr: [
@@ -2334,7 +2337,9 @@ impl eframe::App for App {
         let star_speed = self.params.get(P::StarSpeed);
         let with_bass = self.params.get(P::StarBass);
         let pace = if with_bass >= 0.0 { 1.0 + 4.0 * with_bass * self.bass_env } else { 1.0 + with_bass * self.bass_env };
-        self.star_travel = if star_speed > 0.001 { (self.star_travel + 0.12 * star_speed * pace * dt) % 4096.0 + 1e-6 } else { 0.0 };
+        // The slider gathers pace as it goes up: 1 is a gentle drift, 6 over twenty times that.
+        self.star_rate = 0.06 * star_speed * (1.0 + star_speed) * pace;
+        self.star_travel = if star_speed > 0.001 { (self.star_travel + self.star_rate * dt) % 4096.0 + 1e-6 } else { 0.0 };
 
         if self.show_panel {
             egui::Panel::right("controls").resizable(false).default_size(300.0).show(ui, |ui| self.panel(ui));

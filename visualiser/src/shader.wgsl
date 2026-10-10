@@ -24,7 +24,9 @@ struct Uniforms {
     surround: vec4<f32>,
     // 3D view on (1) or off (0), height of full brightness, storm amount, time in seconds
     relief: vec4<f32>,
-    // 3D camera position and the point it looks at (ground units; z is height)
+    // 3D camera position and the point it looks at (ground units; z is height).
+    // The spare fourth number of the first is how far speed draws the stars
+    // out into streaks in the flight through them.
     cam_eye: vec4<f32>,
     cam_target: vec4<f32>,
     // seconds since the last frame, number of raindrops in use, 3D material strength (0 matte .. 1 full),
@@ -575,7 +577,12 @@ fn star_flight(p: vec2<f32>) -> f32 {
         let rnd = hash(cell);
         if (rnd < 0.72) { continue; }
         let centre = (vec2<f32>(hash(cell + 3.1), hash(cell + 7.7)) - 0.5) * 0.7;
-        let d = length(fract(g) - 0.5 - centre);
+        // At speed a star is drawn out along its path, which runs straight out
+        // from the middle of the picture; the near ones most.
+        let outward = p / max(length(p), 1e-4);
+        let from_star = fract(g) - 0.5 - centre;
+        let along = dot(from_star, outward);
+        let d = length(vec2<f32>(along / (1.0 + u.cam_eye.w * closeness), length(from_star - along * outward)));
         let size = (rnd - 0.72) / 0.28;
         let twinkle = 0.75 + 0.25 * sin(time * (1.5 + 5.0 * hash(cell + 1.7)) + 40.0 * rnd) * (0.35 + 0.65 * u.post.w);
         // They come up out of the dark and are gone as they go by.
