@@ -52,6 +52,7 @@ pub enum P {
     StarDensity,
     StarVariety,
     StarTurn,
+    StarTurnHold,
 }
 
 pub struct Def {
@@ -81,7 +82,7 @@ const fn def(
     Def { id, key, name, unit, min, max, default, log, help }
 }
 
-pub const N_PARAMS: usize = 46;
+pub const N_PARAMS: usize = 47;
 pub const N_PALETTES: usize = 28;
 
 pub const DEFS: [Def; N_PARAMS] = [
@@ -131,6 +132,7 @@ pub const DEFS: [Def; N_PARAMS] = [
     def(P::StarDensity, "star_density", "Star density", "", 0.0, 1.0, 0.5, false, "How many stars there are, from a sparse scatter to a crowded sky."),
     def(P::StarVariety, "star_variety", "Star size variety", "", 0.0, 1.0, 0.5, false, "How much the stars differ in size and brightness. 0 makes them all alike; a half spreads them evenly from small to large; at 1 most are small and a few are much larger and brighter."),
     def(P::StarTurn, "star_turn", "Star flight turn", "", 0.0, 1.0, 0.0, false, "Above 0, each bass hit throws the flight through the stars into a turn: the point the stars stream from swings away from the middle, a different way each hit, and the stars slide across before it straightens up again. Higher values turn harder. It follows the same bass as the bass pulse."),
+    def(P::StarTurnHold, "star_turn_hold", "Star flight turn hold", "s", 0.0, 4.0, 0.0, false, "How long a turn is held at its fullest before it straightens up. 0 straightens as soon as the bass hit dies away; longer keeps the flight banked over, so with hits coming steadily it swings from one heading to the next without levelling out between."),
 ];
 
 pub fn def_of(id: P) -> &'static Def {

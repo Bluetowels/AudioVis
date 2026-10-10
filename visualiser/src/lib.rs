@@ -543,6 +543,9 @@ struct App {
     /// bass level last frame, to tell when a hit starts.
     star_hits: u32,
     star_bass_was: f32,
+    /// How hard the flight is turning (0 to 1), and how long it has been held there.
+    star_turn_level: f32,
+    star_turn_held: f32,
     /// Which cover the renderer was last given (by its address; 0 for none).
     cover_sent: usize,
     /// Whether the title and artist are shown as a track starts.
@@ -694,6 +697,8 @@ impl App {
             star_slide: [0.0; 2],
             star_hits: 0,
             star_bass_was: 0.0,
+            star_turn_level: 0.0,
+            star_turn_held: 0.0,
             cover_sent: 0,
             track_card,
             card: None,
@@ -2141,7 +2146,7 @@ impl App {
             let r = ui.checkbox(&mut self.params.stars, "Show stars");
             self.describe(&r, "A field of stars behind the picture, showing where it is dark. They twinkle with the treble. Still, they drift slowly when the picture is flat, and in 3D they surround it and move with the camera. With a flight speed above 0 the view flies forward through them.");
             if self.params.stars {
-                for id in [P::StarBrightness, P::StarDensity, P::StarVariety, P::StarSpeed, P::StarBass, P::StarTurn] {
+                for id in [P::StarBrightness, P::StarDensity, P::StarVariety, P::StarSpeed, P::StarBass, P::StarTurn, P::StarTurnHold] {
                     self.slider(ui, id);
                 }
             }
@@ -2373,7 +2378,18 @@ impl eframe::App for App {
         }
         self.star_bass_was = self.bass_env;
         let way = self.star_hits as f32 * 2.399_963;
-        let reach = 0.45 * self.params.get(P::StarTurn) * self.bass_env;
+        // The turn is as hard as the hit, held there for the hold time, then
+        // let go as quickly as the bass itself dies away.
+        if self.bass_env >= self.star_turn_level {
+            (self.star_turn_level, self.star_turn_held) = (self.bass_env, 0.0);
+        } else {
+            self.star_turn_held += dt;
+            if self.star_turn_held > self.params.get(P::StarTurnHold) {
+                let release = (-dt * 1000.0 / self.params.get(P::BassRelease)).exp();
+                self.star_turn_level = self.bass_env.max(self.star_turn_level * release);
+            }
+        }
+        let reach = 0.45 * self.params.get(P::StarTurn) * self.star_turn_level;
         let ease = 1.0 - (-dt / 0.12).exp();
         for (i, wanted) in [reach * way.cos(), reach * way.sin()].into_iter().enumerate() {
             self.star_heading[i] += (wanted - self.star_heading[i]) * ease;
