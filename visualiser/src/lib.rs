@@ -331,7 +331,10 @@ pub fn run() -> eframe::Result {
 #[unsafe(no_mangle)]
 fn android_main(app: android_activity::AndroidApp) {
     android::attach(&app);
-    std::panic::set_hook(Box::new(|info| android::log(&format!("AudioVis hit a problem and has to close: {info}"))));
+    std::panic::set_hook(Box::new(|info| {
+        let thread = std::thread::current();
+        android::crashed(&format!("AudioVis hit a problem and has to close (thread {}): {info}", thread.name().unwrap_or("unnamed")));
+    }));
     let mut native = eframe::NativeOptions { android_app: Some(app), ..Default::default() };
     // Phones differ in the largest picture their graphics chip can hold, so
     // ask for what this one has instead of the desktop figure.
@@ -457,7 +460,7 @@ fn message_box(text: &str) {
 /// Android has no simple message box; the error goes to the system log.
 #[cfg(target_os = "android")]
 fn message_box(text: &str) {
-    android::log(text);
+    android::crashed(text);
 }
 
 /// The error has already gone to the terminal, which is all there is here.
@@ -627,6 +630,11 @@ impl App {
         render::init(render_state);
         let info = render_state.adapter.get_info();
         let adapter = format!("{} ({:?})", info.name, info.backend);
+        #[cfg(target_os = "android")]
+        android::progress(&format!(
+            "graphics ready: {adapter}, driver {} {}, picture format {:?}",
+            info.driver, info.driver_info, render_state.target_format
+        ));
 
         let saved: Option<Settings> = std::fs::read_to_string(config_dir().join("settings.json"))
             .ok()
@@ -2738,6 +2746,10 @@ impl eframe::App for App {
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
         self.last_frame = Instant::now();
         self.frames += 1;
+        #[cfg(target_os = "android")]
+        if matches!(self.frames, 1 | 2 | 10 | 100 | 1000) {
+            android::progress(&format!("frame {} drawn, source {}", self.frames, self.capture.source.label()));
+        }
         if self.frames == 30 && self.fullscreen {
             // Fullscreen is requested once the window is up; asking at creation was not honoured.
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));

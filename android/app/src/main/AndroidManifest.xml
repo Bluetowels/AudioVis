@@ -22,6 +22,18 @@
         <!-- The screen is drawn by the Rust library named in lib_name. Every
              kind of change is listed so that turning the phone or plugging
              something in never restarts the app. -->
+        <!-- Where the app opens. It goes straight on to MainActivity, unless
+             the app stopped by itself last time, when it first says why. -->
+        <activity
+            android:name=".StartActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name=".MainActivity"
             android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
@@ -29,10 +41,6 @@
             android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape">
             <meta-data android:name="android.app.lib_name" android:value="audiovis" />
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
         </activity>
 
         <service

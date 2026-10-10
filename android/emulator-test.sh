@@ -12,7 +12,7 @@ package=com.bluetowel.audiovis
 
 adb install -r "$apk"
 adb logcat -c
-adb shell am start -W -n "$package/.MainActivity"
+adb shell am start -W -n "$package/.StartActivity"
 sleep 25
 adb exec-out screencap -p > emulator.png
 sleep 65

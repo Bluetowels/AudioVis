@@ -35,6 +35,30 @@ pub const FILE_APP: &str = "AudioVis file";
 pub fn attach(app: &android_activity::AndroidApp) {
     *JAVA.lock().unwrap() = Some((app.vm_as_ptr() as usize, app.activity_as_ptr() as usize));
     *DATA_DIR.lock().unwrap() = app.internal_data_path();
+    let _ = std::fs::remove_file(data_dir().join(PROGRESS_FILE));
+    progress("the app's library started");
+}
+
+/// Two files in the app's own storage that `StartActivity.java` shows the
+/// next time the app is opened after it has stopped by itself: how far the
+/// last run got, and what went wrong if the app knew.
+const PROGRESS_FILE: &str = "last-run.txt";
+const CRASH_FILE: &str = "crash.txt";
+
+/// Note a step this run has reached, so that if the app then stops without
+/// a word there is a record of how far it got.
+pub fn progress(step: &str) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(data_dir().join(PROGRESS_FILE)) {
+        let _ = writeln!(file, "{step}");
+    }
+}
+
+/// Keep what went wrong, to show the next time the app is opened, and
+/// write it to the system log.
+pub fn crashed(text: &str) {
+    let _ = std::fs::write(data_dir().join(CRASH_FILE), text);
+    log(text);
 }
 
 /// The screen is closing: nothing more may be asked of it.

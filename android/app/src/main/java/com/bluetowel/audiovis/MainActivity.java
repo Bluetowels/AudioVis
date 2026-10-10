@@ -56,6 +56,25 @@ public class MainActivity extends NativeActivity {
         System.loadLibrary("audiovis");
     }
 
+    private static boolean keepingFailures;
+
+    /** If the Java side fails, keep why for StartActivity to show next time, then stop as usual. */
+    private void keepJavaFailures() {
+        final java.io.File report = new java.io.File(getFilesDir(), StartActivity.CRASH_FILE);
+        final Thread.UncaughtExceptionHandler usual = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, problem) -> {
+            try (java.io.PrintWriter out = new java.io.PrintWriter(report, "UTF-8")) {
+                out.println("The Java side of AudioVis failed (thread " + thread.getName() + "):");
+                problem.printStackTrace(out);
+            } catch (IOException | RuntimeException e) {
+                // The usual handler still reports it to Android.
+            }
+            if (usual != null) {
+                usual.uncaughtException(thread, problem);
+            }
+        });
+    }
+
     /** A block of 16-bit samples, channels interleaved, for the picture. */
     static native void nativeAudio(short[] pcm, int samples, int channels, int sampleRate);
 
@@ -116,6 +135,10 @@ public class MainActivity extends NativeActivity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (!keepingFailures) {
+            keepingFailures = true;
+            keepJavaFailures();
+        }
         media = new MediaWatch(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
