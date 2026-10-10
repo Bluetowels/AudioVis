@@ -14,22 +14,29 @@ import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
+import android.media.MediaMetadataRetriever;
 import android.media.MediaRecorder;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.provider.OpenableColumns;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -38,7 +45,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * the Rust library, which NativeActivity loads and runs. This class does the
  * things Android only lets Java do: ask for permissions, record the
  * microphone, ask to capture what other apps are playing, and open and play
- * an audio file. Sound goes to the Rust side through nativeAudio.
+ * an audio file. Sound goes to the Rust side through nativeAudio. For lyrics
+ * it also says what is playing (see MediaWatch for other apps' music) and
+ * fetches web pages for the Rust side.
  */
 public class MainActivity extends NativeActivity {
     static {
@@ -53,6 +62,26 @@ public class MainActivity extends NativeActivity {
     /** A line for the panel: what is playing, or why nothing is. */
     static native void nativeStatus(String text);
 
+    /**
+     * What is playing, for lyrics and the track card; a null app means
+     * nothing is. Position is seconds into the track at this moment, below
+     * zero if not known, and reported changes with each new position.
+     */
+    static native void nativeNowPlaying(String app, String title, String artist, String album,
+            double duration, double position, boolean playing, long reported);
+
+    /** The cover of the track just reported, as MediaWatch.shrink makes it. */
+    static native void nativeCover(int[] pixels);
+
+    /** Whether the user has let the app see what other apps are playing. */
+    static native void nativeMediaAccess(boolean allowed);
+
+    /** The text of the lyrics file chosen for the audio file now playing, or empty text for none. */
+    static native void nativeLyricsFile(String text);
+
+    /** What the app's own audio file is called where it reports what is playing, as in android.rs. */
+    static final String FILE_APP = "AudioVis file";
+
     // Sources, as numbered in android.rs.
     static final int NONE = 0;
     static final int PLAYBACK = 1;
@@ -62,6 +91,7 @@ public class MainActivity extends NativeActivity {
     private static final int ASK_MICROPHONE = 1;
     private static final int ASK_CAPTURE = 2;
     private static final int ASK_FILE = 3;
+    private static final int ASK_LYRICS = 4;
 
     /** Recording rate. Android converts whatever the device really uses. */
     static final int RATE = 48000;
@@ -75,9 +105,18 @@ public class MainActivity extends NativeActivity {
     /** File playback stops while the app is out of sight. */
     private volatile boolean visible = true;
 
+    /** True while the audio file is what is playing, so other apps' music is not reported over it. */
+    static volatile boolean fileReports;
+
+    /** Set when the file's cover should be sent (again) with its next report. */
+    private volatile boolean coverDue;
+
+    private MediaWatch media;
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        media = new MediaWatch(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
@@ -112,6 +151,8 @@ public class MainActivity extends NativeActivity {
     protected void onStart() {
         super.onStart();
         visible = true;
+        // The user may be coming back from allowing notification access.
+        media.connect();
     }
 
     @Override
@@ -123,6 +164,7 @@ public class MainActivity extends NativeActivity {
     @Override
     protected void onDestroy() {
         current.incrementAndGet();
+        media.stop();
         stopService(new Intent(this, CaptureService.class));
         super.onDestroy();
     }
@@ -137,10 +179,87 @@ public class MainActivity extends NativeActivity {
         runOnUiThread(this::chooseFile);
     }
 
+    /** Called from Rust: start or stop saying what is playing. */
+    public void watchMedia(final boolean on) {
+        runOnUiThread(() -> {
+            coverDue = true;
+            if (on) {
+                media.start();
+            } else {
+                media.stop();
+            }
+        });
+    }
+
+    /** Called from Rust: show the setting that lets the app see what other apps are playing. */
+    public void askMediaAccess() {
+        runOnUiThread(() -> media.ask(this));
+    }
+
+    /** Called from Rust: let the user pick a lyrics file to go with the audio file. */
+    public void pickLyrics() {
+        runOnUiThread(() -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    // Android has no file type for lyrics, so every file is offered.
+                    .setType("*/*");
+            try {
+                startActivityForResult(intent, ASK_LYRICS);
+            } catch (ActivityNotFoundException e) {
+                nativeStatus("This device has no file picker");
+            }
+        });
+    }
+
+    /**
+     * Called from Rust, on a thread of its own: fetch a web page. Returns
+     * the status code, a line break and the page; or, if the site could not
+     * be reached, an empty first line and why.
+     */
+    public static String httpGet(String address, String userAgent) {
+        HttpURLConnection link = null;
+        try {
+            link = (HttpURLConnection) new URL(address).openConnection();
+            link.setConnectTimeout(10_000);
+            link.setReadTimeout(10_000);
+            link.setRequestProperty("User-Agent", userAgent);
+            link.setRequestProperty("Accept", "application/json");
+            int status = link.getResponseCode();
+            InputStream in = status >= 400 ? link.getErrorStream() : link.getInputStream();
+            String page = in == null ? "" : new String(readAll(in, 8 << 20), StandardCharsets.UTF_8);
+            return status + "\n" + page;
+        } catch (IOException | RuntimeException e) {
+            return "\n" + (e.getMessage() == null ? e.toString() : e.getMessage());
+        } finally {
+            if (link != null) {
+                link.disconnect();
+            }
+        }
+    }
+
+    /** Everything in a stream, up to a limit. */
+    private static byte[] readAll(InputStream in, int limit) throws IOException {
+        try (InputStream stream = in) {
+            ByteArrayOutputStream all = new ByteArrayOutputStream();
+            byte[] block = new byte[16384];
+            int read;
+            while (all.size() < limit && (read = stream.read(block)) > 0) {
+                all.write(block, 0, read);
+            }
+            return all.toByteArray();
+        }
+    }
+
     private void begin(int kind) {
         current.incrementAndGet();
         stopService(new Intent(this, CaptureService.class));
         wanted = kind;
+        if (kind != FILE) {
+            // Back to saying what other apps are playing, with no lyrics file.
+            fileReports = false;
+            nativeLyricsFile("");
+            media.look();
+        }
         if (kind == MICROPHONE || kind == PLAYBACK) {
             // Android counts capturing other apps as recording, so both need this.
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -218,7 +337,36 @@ public class MainActivity extends NativeActivity {
             if (wanted == FILE) {
                 startFile(file);
             }
+        } else if (code == ASK_LYRICS && result == RESULT_OK && data != null && data.getData() != null) {
+            Uri audio = lastFile();
+            if (audio == null) {
+                return;
+            }
+            String lyrics;
+            try (InputStream in = getContentResolver().openInputStream(data.getData())) {
+                lyrics = in == null ? "" : decode(readAll(in, 512 << 10));
+            } catch (IOException | RuntimeException e) {
+                nativeStatus("Could not read the lyrics file: " + e.getMessage());
+                return;
+            }
+            // Kept with the audio file's address, so it comes back whenever that file plays.
+            getPreferences(MODE_PRIVATE).edit().putString(LYRICS_FOR + audio, lyrics).apply();
+            if (wanted == FILE) {
+                nativeLyricsFile(lyrics);
+            }
         }
+    }
+
+    /** Where the lyrics chosen for an audio file are kept in the app's preferences. */
+    private static final String LYRICS_FOR = "lyrics for ";
+
+    /** Text from a file's bytes: UTF-8 unless it starts with the mark of UTF-16. */
+    private static String decode(byte[] bytes) {
+        if (bytes.length >= 2 && ((bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xFE)
+                || (bytes[0] == (byte) 0xFE && bytes[1] == (byte) 0xFF))) {
+            return new String(bytes, StandardCharsets.UTF_16);
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private Uri lastFile() {
@@ -288,15 +436,73 @@ public class MainActivity extends NativeActivity {
     private void startFile(final Uri file) {
         final int id = current.incrementAndGet();
         final String name = nameOf(file);
+        fileReports = true;
+        coverDue = true;
+        nativeLyricsFile(getPreferences(MODE_PRIVATE).getString(LYRICS_FOR + file, ""));
         new Thread(() -> {
             try {
                 playFile(file, name, id);
             } catch (Exception e) {
                 if (current.get() == id) {
                     nativeStatus("Could not play " + name + ": " + e.getMessage());
+                    nativeNowPlaying(null, null, null, null, 0, -1, false, 0);
                 }
             }
         }, "audiovis-file").start();
+    }
+
+    /** What an audio file says about itself. */
+    private static final class Tags {
+        String title = "";
+        String artist = "";
+        String album = "";
+        /** Length in seconds, 0 if not known. */
+        double length;
+        /** The cover kept inside the file, as MediaWatch.shrink makes it, or null. */
+        int[] cover;
+    }
+
+    private static String tag(MediaMetadataRetriever from, int key) {
+        String value = from.extractMetadata(key);
+        return value == null ? "" : value.trim();
+    }
+
+    /** The title, artist, album, length and cover written inside an audio file, with the file's name standing in for a missing title. */
+    private Tags tagsOf(Uri file, String name) {
+        Tags tags = new Tags();
+        MediaMetadataRetriever reader = new MediaMetadataRetriever();
+        try {
+            reader.setDataSource(this, file);
+            tags.title = tag(reader, MediaMetadataRetriever.METADATA_KEY_TITLE);
+            tags.artist = tag(reader, MediaMetadataRetriever.METADATA_KEY_ARTIST);
+            if (tags.artist.isEmpty()) {
+                tags.artist = tag(reader, MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST);
+            }
+            tags.album = tag(reader, MediaMetadataRetriever.METADATA_KEY_ALBUM);
+            String length = tag(reader, MediaMetadataRetriever.METADATA_KEY_DURATION);
+            tags.length = length.isEmpty() ? 0 : Long.parseLong(length) / 1000.0;
+            tags.cover = MediaWatch.shrink(reader.getEmbeddedPicture());
+        } catch (RuntimeException e) {
+            // A file with no tags it can read still plays.
+        } finally {
+            try {
+                reader.release();
+            } catch (Exception e) {
+                // Nothing to be done about it.
+            }
+        }
+        if (tags.title.isEmpty()) {
+            // "Artist - Title.mp3" is a common way to name a file.
+            String plain = name.contains(".") ? name.substring(0, name.lastIndexOf('.')) : name;
+            int dash = plain.indexOf(" - ");
+            if (dash > 0 && tags.artist.isEmpty()) {
+                tags.artist = plain.substring(0, dash).trim();
+                tags.title = plain.substring(dash + 3).trim();
+            } else {
+                tags.title = plain;
+            }
+        }
+        return tags;
     }
 
     /** Decode a file, play it through the speaker and show it, round and round, until a newer source takes over. */
@@ -305,6 +511,7 @@ public class MainActivity extends NativeActivity {
         MediaCodec codec = null;
         AudioTrack speaker = null;
         try {
+            Tags tags = tagsOf(file, name);
             extractor.setDataSource(this, file, null);
             MediaFormat format = null;
             for (int i = 0; i < extractor.getTrackCount() && format == null; i++) {
@@ -331,14 +538,22 @@ public class MainActivity extends NativeActivity {
             // The speaker plays what it is given a moment later, so the
             // picture is held back by the same amount to stay in step.
             ArrayDeque<short[]> held = new ArrayDeque<>();
+            // How far into the file each held block is, in millionths of a second.
+            ArrayDeque<Long> heldTimes = new ArrayDeque<>();
             int heldFrames = 0;
             int delayFrames = 0;
+            // How far into the file the picture has got, and when that was last passed on.
+            long shown = 0;
+            long toldAt = 0;
 
             while (current.get() == id) {
                 if (!visible) {
                     if (speaker != null && !paused) {
                         speaker.pause();
                         paused = true;
+                        nativeNowPlaying(FILE_APP, tags.title, tags.artist, tags.album, tags.length, shown / 1e6, false,
+                                SystemClock.elapsedRealtime());
+                        toldAt = 0;
                     }
                     Thread.sleep(50);
                     continue;
@@ -382,11 +597,27 @@ public class MainActivity extends NativeActivity {
                         // Waits for room in the speaker's buffer, which is what keeps time.
                         speaker.write(stereo, 0, stereo.length);
                         held.add(stereo);
+                        heldTimes.add(info.presentationTimeUs);
                         heldFrames += stereo.length / 2;
                         while (!held.isEmpty() && heldFrames - held.peek().length / 2 >= delayFrames) {
                             short[] due = held.poll();
+                            long time = heldTimes.poll();
                             heldFrames -= due.length / 2;
                             nativeAudio(due, due.length, 2, rate);
+                            // Say where the file has got to every second, and at once
+                            // when it starts, resumes or goes back to the top.
+                            long clock = SystemClock.elapsedRealtime();
+                            if (current.get() == id && (clock - toldAt >= 1000 || time < shown)) {
+                                nativeNowPlaying(FILE_APP, tags.title, tags.artist, tags.album, tags.length, time / 1e6, true, clock);
+                                toldAt = clock;
+                                if (coverDue) {
+                                    coverDue = false;
+                                    if (tags.cover != null) {
+                                        nativeCover(tags.cover);
+                                    }
+                                }
+                            }
+                            shown = time;
                         }
                     }
                     codec.releaseOutputBuffer(out, false);
@@ -406,6 +637,13 @@ public class MainActivity extends NativeActivity {
                 codec.release();
             }
             extractor.release();
+            // If the file is no longer the source, other apps' music is what is playing again.
+            runOnUiThread(() -> {
+                if (wanted != FILE) {
+                    fileReports = false;
+                    media.look();
+                }
+            });
         }
     }
 

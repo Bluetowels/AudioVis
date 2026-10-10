@@ -2,7 +2,8 @@
 //! for permissions, capture what other apps are playing or open a file the
 //! user picks, so that part of the app is Java (android/app/src/main/java).
 //! This file asks it to start and stop a source, and takes in the sound it
-//! sends back.
+//! sends back. It also passes on the two things lyrics need from Android:
+//! leave to see what other apps are playing, and a way to fetch a web page.
 
 use crate::audio::Ring;
 use jni::JNIEnv;
@@ -10,6 +11,7 @@ use jni::objects::{JClass, JObject, JShortArray, JString, JValue};
 use jni::sys::jint;
 use std::ffi::{CString, c_char, c_int};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 /// The Java virtual machine and the app's screen (its activity), as Android handed them over.
@@ -19,6 +21,15 @@ static DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 static FEED: Mutex<(u64, Option<Weak<Mutex<Ring>>>)> = Mutex::new((0, None));
 /// What the Java side last said about the source: what is playing, or what went wrong.
 static STATUS: Mutex<String> = Mutex::new(String::new());
+/// Whether the user has let the app see what other apps are playing.
+static MEDIA_ACCESS: AtomicBool = AtomicBool::new(false);
+/// The text of a lyrics file the user has picked for the audio file, until
+/// the app takes it. Empty text means there is none any more.
+static LYRICS_FILE: Mutex<Option<String>> = Mutex::new(None);
+
+/// What the Java side calls the app's own audio file where it reports what
+/// is playing. Shared with `MainActivity.java`.
+pub const FILE_APP: &str = "AudioVis file";
 
 /// Called once each time Android opens the app's screen.
 pub fn attach(app: &android_activity::AndroidApp) {
@@ -117,6 +128,75 @@ pub fn status() -> String {
     STATUS.lock().unwrap().clone()
 }
 
+/// Start or stop being told what other apps are playing. The news arrives
+/// in `nowplaying.rs`. Nothing comes until the user has allowed it.
+pub fn watch_media(on: bool) {
+    call("watchMedia", "(Z)V", &[JValue::Bool(on as u8)]);
+}
+
+/// Whether Android lets the app see what other apps are playing.
+pub fn media_access() -> bool {
+    MEDIA_ACCESS.load(Ordering::Relaxed)
+}
+
+/// Open the page of Android's settings where the user allows that.
+pub fn ask_media_access() {
+    call("askMediaAccess", "()V", &[]);
+}
+
+/// Ask the user to pick a lyrics (.lrc) file for the audio file that is playing.
+pub fn pick_lyrics() {
+    call("pickLyrics", "()V", &[]);
+}
+
+/// A lyrics file picked since this was last asked: its text, or empty text
+/// if the audio file playing now has none.
+pub fn take_lyrics_file() -> Option<String> {
+    LYRICS_FILE.lock().unwrap().take()
+}
+
+/// Fetch a web page with Android's own networking and certificates. Gives
+/// the status code and the body. Waits for the answer, so not for the
+/// thread that draws.
+pub fn http_get(url: &str, user_agent: &str) -> Result<(u16, String), String> {
+    const NO_JAVA: &str = "the app could not reach Android's networking";
+    let java = JAVA.lock().unwrap();
+    let Some((vm, activity)) = *java else { return Err("the app is closing".to_string()) };
+    // SAFETY: as in `call`. The activity is only used while `JAVA` is held,
+    // so it cannot go away meanwhile; the class found through it lasts.
+    let vm = unsafe { jni::JavaVM::from_raw(vm as *mut jni::sys::JavaVM) }.map_err(|_| NO_JAVA)?;
+    let mut env = vm.attach_current_thread().map_err(|_| NO_JAVA)?;
+    let activity = unsafe { JObject::from_raw(activity as jni::sys::jobject) };
+    let class = env.get_object_class(&activity).map_err(|_| NO_JAVA)?;
+    drop(java);
+
+    let answer = (|| {
+        let url = env.new_string(url)?;
+        let user_agent = env.new_string(user_agent)?;
+        let answer = env
+            .call_static_method(
+                &class,
+                "httpGet",
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                &[JValue::Object(&url), JValue::Object(&user_agent)],
+            )?
+            .l()?;
+        let answer: String = env.get_string(&JString::from(answer))?.into();
+        Ok::<String, jni::errors::Error>(answer)
+    })();
+    let Ok(answer) = answer else {
+        let _ = env.exception_clear();
+        return Err(NO_JAVA.to_string());
+    };
+    // The status code on the first line and the page after it, or an empty
+    // first line and why it could not be fetched.
+    let (status, body) = answer.split_once('\n').unwrap_or(("", answer.as_str()));
+    match status.parse() {
+        Ok(status) => Ok((status, body.to_string())),
+        Err(_) => Err(body.to_string()),
+    }
+}
+
 /// A block of sound from the Java side: 16-bit samples, channels interleaved.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_bluetowel_audiovis_MainActivity_nativeAudio<'local>(
@@ -156,4 +236,26 @@ pub extern "system" fn Java_com_bluetowel_audiovis_MainActivity_nativeStatus<'lo
 ) {
     let text: String = env.get_string(&text).map(Into::into).unwrap_or_default();
     *STATUS.lock().unwrap() = text;
+}
+
+/// Whether the user has allowed the app to see what other apps are playing.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_bluetowel_audiovis_MainActivity_nativeMediaAccess<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    allowed: jni::sys::jboolean,
+) {
+    MEDIA_ACCESS.store(allowed != 0, Ordering::Relaxed);
+}
+
+/// The text of the lyrics file that goes with the audio file now playing,
+/// or empty text if it has none.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_bluetowel_audiovis_MainActivity_nativeLyricsFile<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    text: JString<'local>,
+) {
+    let text: String = env.get_string(&text).map(Into::into).unwrap_or_default();
+    *LYRICS_FILE.lock().unwrap() = Some(text);
 }

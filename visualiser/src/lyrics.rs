@@ -261,7 +261,7 @@ fn plain_title(title: &str) -> &str {
 }
 
 /// Synced lyrics in one of LRCLIB's records, or why it has none.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "android"))]
 fn synced_in(record: &serde_json::Value) -> Result<String, &'static str> {
     match record.get("syncedLyrics").and_then(|v| v.as_str()) {
         Some(text) if !text.trim().is_empty() => Ok(text.to_string()),
@@ -270,21 +270,29 @@ fn synced_in(record: &serde_json::Value) -> Result<String, &'static str> {
     }
 }
 
-/// Ask LRCLIB. Returns the synced lyrics as LRC text, or the reason there are none.
+#[cfg(any(windows, target_os = "android"))]
+const SITE: &str = "https://lrclib.net/api";
+/// LRCLIB asks apps to say who they are.
+#[cfg(any(windows, target_os = "android"))]
+const USER_AGENT: &str = concat!("AudioVis/", env!("CARGO_PKG_VERSION"), " (https://github.com/Bluetowels/AudioVis)");
+
+/// Something that asks LRCLIB one question: the page under `SITE` and the
+/// fields to send, giving the status code and the answer.
+#[cfg(any(windows, target_os = "android"))]
+type Get = Box<dyn Fn(&str, &[(&str, &str)]) -> Result<(u16, serde_json::Value), String>>;
+
 #[cfg(windows)]
-fn fetch(query: &Query) -> Result<(Option<String>, String), String> {
+fn client() -> Get {
     use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
-    const SITE: &str = "https://lrclib.net/api";
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
-        // LRCLIB asks apps to say who they are.
-        .user_agent(concat!("AudioVis/", env!("CARGO_PKG_VERSION"), " (https://github.com/Bluetowels/AudioVis)"))
+        .user_agent(USER_AGENT)
         .http_status_as_error(false)
         // Windows' own TLS and certificates.
         .tls_config(TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build())
         .build()
         .into();
-    let get = |path: &str, fields: &[(&str, &str)]| -> Result<(u16, serde_json::Value), String> {
+    Box::new(move |path: &str, fields: &[(&str, &str)]| -> Result<(u16, serde_json::Value), String> {
         let mut request = agent.get(format!("{SITE}/{path}"));
         for (name, value) in fields.iter().filter(|(_, value)| !value.is_empty()) {
             request = request.query(name, value);
@@ -293,7 +301,41 @@ fn fetch(query: &Query) -> Result<(Option<String>, String), String> {
         let status = response.status().as_u16();
         let body = response.body_mut().read_to_string().map_err(|e| e.to_string())?;
         Ok((status, serde_json::from_str(&body).unwrap_or(serde_json::Value::Null)))
-    };
+    })
+}
+
+/// Text made safe to put in a web address.
+#[cfg(any(target_os = "android", test))]
+fn url_encoded(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Android's own networking and certificates, by way of the Java side of the app.
+#[cfg(target_os = "android")]
+fn client() -> Get {
+    Box::new(|path: &str, fields: &[(&str, &str)]| -> Result<(u16, serde_json::Value), String> {
+        let mut url = format!("{SITE}/{path}");
+        for (i, (name, value)) in fields.iter().filter(|(_, value)| !value.is_empty()).enumerate() {
+            url.push(if i == 0 { '?' } else { '&' });
+            url.push_str(&format!("{name}={}", url_encoded(value)));
+        }
+        let (status, body) = crate::android::http_get(&url, USER_AGENT)?;
+        Ok((status, serde_json::from_str(&body).unwrap_or(serde_json::Value::Null)))
+    })
+}
+
+/// Ask LRCLIB. Returns the synced lyrics as LRC text, or the reason there are none.
+#[cfg(any(windows, target_os = "android"))]
+fn fetch(query: &Query) -> Result<(Option<String>, String), String> {
+    let get = client();
 
     let duration = if query.duration > 0.0 { format!("{:.0}", query.duration) } else { String::new() };
     let mut note = "LRCLIB has no lyrics for this track";
@@ -344,8 +386,8 @@ fn fetch(query: &Query) -> Result<(Option<String>, String), String> {
     Ok((None, note.to_string()))
 }
 
-/// Only the Windows build knows what is playing, so only it fetches lyrics.
-#[cfg(not(windows))]
+/// Only the Windows and Android builds know what is playing, so only they fetch lyrics.
+#[cfg(not(any(windows, target_os = "android")))]
 fn fetch(_query: &Query) -> Result<(Option<String>, String), String> {
     Err("not available on this system".to_string())
 }
@@ -389,6 +431,11 @@ mod tests {
         let found = fetch(&query);
         println!("{:.1} s: {:?}", started.elapsed().as_secs_f32(), found.as_ref().map(|(text, note)| (text.as_ref().map(|t| parse_lrc(t).len()), note)));
         assert!(found.is_ok());
+    }
+
+    #[test]
+    fn web_addresses() {
+        assert_eq!(url_encoded("Beyoncé & Jay-Z: 4.44~"), "Beyonc%C3%A9%20%26%20Jay-Z%3A%204.44~");
     }
 
     #[test]

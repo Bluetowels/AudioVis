@@ -1,7 +1,9 @@
 //! What is playing in other apps, and how far through it is, from Windows'
 //! media controls (the same information as the volume flyout shows). Spotify,
-//! Tidal, browsers and most players report there. Other systems have no
-//! equivalent wired up, so there nothing is ever reported as playing.
+//! Tidal, browsers and most players report there. On Android it comes from
+//! the media controls in the notification shade, by way of the Java side of
+//! the app, once the user has allowed that. Other systems have no equivalent
+//! wired up, so there nothing is ever reported as playing.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -59,6 +61,8 @@ impl NowPlaying {
                 let _ = windows_media::watch(weak);
             });
         }
+        #[cfg(target_os = "android")]
+        android_media::watch(Arc::downgrade(&shared));
         Self { shared }
     }
 
@@ -263,6 +267,105 @@ mod windows_media {
                 Ok(session_changed) => reconnect = session_changed || woken.try_iter().any(|changed| changed),
                 Err(_) => {}
             }
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+mod android_media {
+    use super::{COVER_SIZE, Cover, Shared, Track};
+    use jni::JNIEnv;
+    use jni::objects::{JClass, JIntArray, JString};
+    use jni::sys::{jboolean, jdouble, jlong};
+    use std::sync::{Arc, Mutex, Weak};
+    use std::time::Instant;
+
+    /// Where news of what is playing goes, and the stamp of the last report
+    /// the position was taken from.
+    static WATCHER: Mutex<(Option<Weak<Mutex<Shared>>>, i64)> = Mutex::new((None, 0));
+
+    /// Ask the Java side to say what is playing, from now on, into `shared`.
+    pub fn watch(shared: Weak<Mutex<Shared>>) {
+        *WATCHER.lock().unwrap() = (Some(shared), 0);
+        crate::android::watch_media(true);
+    }
+
+    /// What is playing, from `MediaWatch.java` or the app's own file player.
+    /// No app (a null `app`) means nothing is. `position` is seconds into
+    /// the track at this moment, below zero if the player does not say, and
+    /// `reported` changes whenever the player has given a new position.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_bluetowel_audiovis_MainActivity_nativeNowPlaying<'local>(
+        mut env: JNIEnv<'local>,
+        _class: JClass<'local>,
+        app: JString<'local>,
+        title: JString<'local>,
+        artist: JString<'local>,
+        album: JString<'local>,
+        duration: jdouble,
+        position: jdouble,
+        playing: jboolean,
+        reported: jlong,
+    ) {
+        let mut text = |s: &JString<'local>| -> String {
+            if s.as_raw().is_null() { String::new() } else { env.get_string(s).map(Into::into).unwrap_or_default() }
+        };
+        let track = (!app.as_raw().is_null()).then(|| Track {
+            app: text(&app),
+            title: text(&title),
+            artist: text(&artist),
+            album: text(&album),
+            duration: duration.max(0.0),
+        });
+        let playing = playing != 0;
+
+        let mut watcher = WATCHER.lock().unwrap();
+        let Some(shared) = watcher.0.as_ref().and_then(Weak::upgrade) else { return };
+        let mut shared = shared.lock().unwrap();
+        let Some(track) = track else {
+            *shared = Shared::default();
+            return;
+        };
+        let now = Instant::now();
+        let same_track = shared.track.as_ref().is_some_and(|t| t.app == track.app && t.title == track.title && t.artist == track.artist);
+        // As on Windows: players report the position now and then, and
+        // between reports it is counted forward from the last one.
+        if reported != watcher.1 || shared.track.is_none() {
+            shared.position = (position >= 0.0).then_some((position, now));
+            watcher.1 = reported;
+        } else if !same_track {
+            // A new track with no new report: take it as just started.
+            shared.position = shared.position.map(|_| (0.0, now));
+        } else if playing != shared.playing {
+            // Paused or resumed without a report: hold, or carry on from, where it was.
+            shared.position = shared.position.map(|(position, at)| (if shared.playing { position + (now - at).as_secs_f64() } else { position }, now));
+        }
+        // The cover follows in `nativeCover`.
+        if !same_track {
+            shared.cover = None;
+        }
+        shared.playing = playing;
+        shared.track = Some(track);
+    }
+
+    /// The cover of the track just reported: `COVER_SIZE` squared pixels,
+    /// each a number holding alpha, red, green and blue.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_bluetowel_audiovis_MainActivity_nativeCover<'local>(
+        env: JNIEnv<'local>,
+        _class: JClass<'local>,
+        pixels: JIntArray<'local>,
+    ) {
+        let mut argb = vec![0i32; (COVER_SIZE * COVER_SIZE) as usize];
+        if pixels.as_raw().is_null() || env.get_array_length(&pixels).ok() != Some(argb.len() as i32) || env.get_int_array_region(&pixels, 0, &mut argb).is_err() {
+            let _ = env.exception_clear();
+            return;
+        }
+        let rgba = argb.iter().flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8, 255]).collect();
+        let Some(shared) = WATCHER.lock().unwrap().0.as_ref().and_then(Weak::upgrade) else { return };
+        let mut shared = shared.lock().unwrap();
+        if shared.track.is_some() {
+            shared.cover = Some(Arc::new(Cover { rgba }));
         }
     }
 }

@@ -144,6 +144,13 @@ It runs in landscape and fills the screen. A first run shows the built-in test s
 - **Audio file.** Pick a file and the app plays it out loud, on repeat, and draws it. It stops while the app is out of sight.
 - **Test signal.** The built-in kick, chord and hi-hat.
 
+**Lyrics, the track card and the album cover** work on Android too, with two differences from Windows:
+
+- **Other apps' music.** To learn what is playing (title, artist, cover and position, as in the media controls in the notification shade), Android requires what it calls notification access. Tick "Show lyrics" in the panel, then "Allow in Android's settings", and turn on AudioVis in the list that opens. On Android 13 and later an app installed from an APK is refused at first ("restricted setting"): open Settings > Apps > AudioVis, tap the three dots at the top, choose "Allow restricted settings", and try again. AudioVis only asks Android for the media controls; it does not read your notifications. This works even with apps that refuse to have their sound captured, so the microphone can draw the picture while the lyrics follow the player.
+- **The app's own audio file.** The title, artist, album and cover are read from the file's tags (or from a name like `Artist - Title.mp3`) and the lyrics are looked up from those. To use a lyrics file of your own instead, choose "Choose a lyrics file" in the Lyrics section and pick the `.lrc`; it is remembered for that audio file. Android does not let an app see the files beside the one you picked, so a `.lrc` next to the audio file is not found by itself.
+
+As on Windows, "Show lyrics" is off by default, and while it is on the title, artist, album and length of each track are sent to lrclib.net. Nothing else uses the network.
+
 Touch stands in for the keyboard and mouse:
 
 | Touch | Action |
@@ -197,7 +204,7 @@ Rest the pointer on any setting to see a description of what it does; the "Descr
 | `--no-vsync` | Uncap the frame rate for this run |
 | `--midi-port NAME` | Use a specific MIDI input port |
 | `--set key=value` | Set any slider by its key, e.g. `--set bass_amount=2` |
-| `--lyrics` | Show lyrics on this run (Windows only; see [Lyrics](#lyrics)) |
+| `--lyrics` | Show lyrics on this run (Windows; see [Lyrics](#lyrics)) |
 | `--lyrics-file song.lrc` | Show the lyrics in this LRC file, timed from when the app starts, instead of looking any up |
 
 The app uses Vulkan (Metal on macOS) on the high-performance GPU by default. To override this, set the `WGPU_BACKEND` and `WGPU_POWER_PREF` environment variables.
@@ -291,7 +298,7 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 |---|---|---|---|
 | Palette | Ember | 28 palettes | Colours from quiet to loud; 18 are smooth and 10 jump from colour to colour |
 | Palette drift | 0 s (off) | 0 to 120 | Above 0, the colours blend on from palette to palette, spending this many seconds on each |
-| Colours from the album cover | off | | Windows only: takes the palette from the cover of the track that is playing |
+| Colours from the album cover | off | | Windows and Android: takes the palette from the cover of the track that is playing |
 | Colour banding | 0 | 0 to 1 | 0 blends smoothly; 1 gives hard-edged bands |
 | Reverse palette | off | | Swaps the palette end for end |
 | Bloom | 0.3 | 0 to 1 | A soft glow that spreads from the bright parts of the picture; 0 is off |
@@ -303,7 +310,7 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 
 ### Lyrics
 
-Windows only.
+Windows, and Android (see [Android](#android) for what differs there).
 
 | Setting | Default | Range | What it does |
 |---|---|---|---|
@@ -430,7 +437,7 @@ visualiser/        Rust app (eframe/egui UI, wgpu rendering)
   src/analysis.rs  variable-Q spectrum, note sharpening and bass meter
   src/params.rs    every adjustable setting, its description, and the palettes
   src/lyrics.rs    LRC lyrics parser, LRCLIB lookup and its cache
-  src/nowplaying.rs  Windows only: what other apps are playing, from the media controls
+  src/nowplaying.rs  Windows and Android: what other apps are playing, from the media controls
   src/midi.rs      MIDI controller input and learn
   src/render.rs    GPU pipelines (picture, 3D map, raindrops)
   src/shader.wgsl  cross and circle views, 3D, rain, colour mapping

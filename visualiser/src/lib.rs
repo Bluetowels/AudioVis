@@ -5,12 +5,12 @@ mod analysis;
 #[cfg(target_os = "android")]
 mod android;
 mod audio;
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "android")), allow(dead_code))]
 mod cover;
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "android")), allow(dead_code))]
 mod lyrics;
 mod midi;
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "android")), allow(dead_code))]
 mod nowplaying;
 mod params;
 mod render;
@@ -123,6 +123,14 @@ const SYSTEM_NAME: &str = "macOS";
 #[cfg(not(any(windows, target_os = "macos")))]
 #[cfg_attr(target_os = "android", allow(dead_code))]
 const SYSTEM_NAME: &str = "system";
+
+/// Who tells the app what is playing, and what the panel calls the machine
+/// it runs on.
+#[cfg(not(target_os = "android"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+const PLAYING_FROM: (&str, &str) = ("Windows", "this PC");
+#[cfg(target_os = "android")]
+const PLAYING_FROM: (&str, &str) = ("Android", "this device");
 
 /// With no saved settings the app listens to this. On Android every real
 /// source needs a permission, so a first run shows the test signal instead of
@@ -606,6 +614,9 @@ struct App {
     /// The settings as last written to storage, and when they were last checked.
     #[cfg(target_os = "android")]
     saved: (String, Instant),
+    /// A lyrics file the user picked to go with the audio file being played.
+    #[cfg(target_os = "android")]
+    picked_lyrics: Option<std::sync::Arc<[lyrics::Line]>>,
 }
 
 impl App {
@@ -755,6 +766,8 @@ impl App {
             swipe: 0.0,
             #[cfg(target_os = "android")]
             saved: (String::new(), Instant::now()),
+            #[cfg(target_os = "android")]
+            picked_lyrics: None,
         }
     }
 
@@ -848,6 +861,24 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// What Android needs from the user before there can be lyrics: for
+    /// other apps' music, leave to see what is playing; for the app's own
+    /// audio file, optionally a lyrics file to go with it.
+    #[cfg(target_os = "android")]
+    fn android_lyrics(&mut self, ui: &mut egui::Ui) {
+        if self.capture.source == Source::File {
+            if ui.button("Choose a lyrics file").clicked() {
+                android::pick_lyrics();
+            }
+            ui.small("Optional, for the audio file: a .lrc file to show instead of looking the lyrics up. Android does not let an app see the files beside the one you picked, so it is chosen by hand, and remembered for that audio file.");
+        } else if !android::media_access() {
+            if ui.button("Allow in Android's settings").clicked() {
+                android::ask_media_access();
+            }
+            ui.small("To learn what other apps are playing, AudioVis needs what Android calls notification access: turn on AudioVis in the list that opens. If Android says the setting is restricted, open Settings > Apps > AudioVis, tap the three dots at the top and choose Allow restricted settings, then try again. AudioVis only looks at the media controls there; it does not read your notifications.");
         }
     }
 
@@ -1227,6 +1258,10 @@ impl App {
             || self.card_fly_asked
             // One asked for by hand is still on its way.
             || (self.card.is_some() && self.card_flying && self.card_near < 1.0);
+        #[cfg(target_os = "android")]
+        if let Some(text) = android::take_lyrics_file() {
+            self.picked_lyrics = Some(lyrics::parse_lrc(&text)).filter(|lines| !lines.is_empty()).map(Into::into);
+        }
         self.playing = if wanted { self.now_playing.get_or_insert_with(nowplaying::NowPlaying::start).now() } else { None };
     }
 
@@ -1338,6 +1373,29 @@ impl App {
         format!("{app}: {} by {}: {state}", track.title, track.artist)
     }
 
+    /// One line for the panel: what is playing and whether it has lyrics.
+    #[cfg(target_os = "android")]
+    fn lyrics_status(&self) -> String {
+        let Some(track) = &self.lyrics_track else {
+            return if self.capture.source == Source::File {
+                "No audio file is playing.".into()
+            } else if !android::media_access() {
+                "Android has not yet allowed AudioVis to see what other apps are playing.".into()
+            } else {
+                "Nothing is playing in an app that reports to Android's media controls.".into()
+            };
+        };
+        let picked = self.picked_lyrics.as_ref().filter(|_| track.app == android::FILE_APP);
+        let state = match (picked, self.lookup.state(&Self::lyrics_query(track))) {
+            (Some(lines), _) => format!("{} lines from the lyrics file you chose", lines.len()),
+            _ if track.title.is_empty() => "no title reported".to_string(),
+            (_, lyrics::State::Looking) => "looking for lyrics…".to_string(),
+            (_, lyrics::State::Synced(lines)) => format!("{} lines of lyrics", lines.len()),
+            (_, lyrics::State::Missing(why)) => why,
+        };
+        format!("{} by {}: {state}", track.title, track.artist)
+    }
+
     /// Work out which lyrics are wanted and how far through them the music
     /// is, then draw them in the chosen place.
     fn draw_lyrics(&mut self, painter: &egui::Painter, picture: egui::Rect) {
@@ -1352,10 +1410,16 @@ impl App {
                     return;
                 };
                 let query = Self::lyrics_query(&now.track);
-                if !query.title.is_empty() {
+                // A lyrics file picked for the app's own audio file is shown as it is.
+                #[cfg(target_os = "android")]
+                let picked = self.picked_lyrics.clone().filter(|_| now.track.app == android::FILE_APP);
+                #[cfg(not(target_os = "android"))]
+                let picked: Option<std::sync::Arc<[lyrics::Line]>> = None;
+                if picked.is_none() && !query.title.is_empty() {
                     self.lookup.want(&query);
                 }
                 let lines = match self.lookup.state(&query) {
+                    _ if picked.is_some() => picked,
                     lyrics::State::Synced(lines) => Some(lines),
                     _ => None,
                 };
@@ -2154,11 +2218,11 @@ impl App {
                 let r = ui.toggle_value(&mut self.show_fps_graph, "FPS graph");
                 self.describe(&r, "Show a graph of the frame rate over the last two seconds in the top-left corner of the picture, so dips and stutters are visible. Also on F3.");
             });
-            // What other apps are playing is only known on Windows.
-            #[cfg(windows)]
+            // What other apps are playing is only known on Windows and Android.
+            #[cfg(any(windows, target_os = "android"))]
             {
             let r = ui.checkbox(&mut self.track_card, "Show each track's title as it starts");
-            self.describe(&r, "When a new track starts in a music app, show its title, artist, album and cover in the top-right corner of the picture for a few seconds. These are read from Windows on this PC; nothing is sent anywhere.");
+            self.describe(&r, &format!("When a new track starts in a music app, show its title, artist, album and cover in the top-right corner of the picture for a few seconds. These are read from {} on {}; nothing is sent anywhere.", PLAYING_FROM.0, PLAYING_FROM.1));
             if self.track_card {
                 let r = ui.checkbox(&mut self.track_card_fly, "Fly the title in from the distance");
                 self.describe(&r, "Instead of the corner, the cover and title start as a dot far ahead and come towards you, growing until they fill the picture and thinning away as they do. With the stars flying they come at the stars' pace, from the point the stars stream out of, and the flight holds a steady course and speed until they have passed.");
@@ -2351,10 +2415,10 @@ impl App {
 
             if self.section(ui, "Colour") {
             self.slider(ui, P::Palette);
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "android"))]
             {
             let r = ui.checkbox(&mut self.params.palette_from_cover, "Colours from the album cover");
-            self.describe(&r, "Take the colours from the cover of whatever track is playing, so each track has its own look: its two strongest colours from dark to bright, with a bass colour chosen to stand apart from them. The cover is read from Windows on this PC; nothing is sent anywhere. With nothing playing, or a player that shows no cover, the palette above is used.");
+            self.describe(&r, &format!("Take the colours from the cover of whatever track is playing, so each track has its own look: its two strongest colours from dark to bright, with a bass colour chosen to stand apart from them. The cover is read from {} on {}; nothing is sent anywhere. With nothing playing, or a player that shows no cover, the palette above is used.", PLAYING_FROM.0, PLAYING_FROM.1));
             }
             self.slider(ui, P::PaletteDrift);
             self.slider(ui, P::Banding);
@@ -2362,12 +2426,12 @@ impl App {
             ui.horizontal(|ui| {
                 ui.label("Background");
                 for b in Backdrop::ALL {
-                    // The cover is only known on Windows.
-                    if b == Backdrop::Cover && !cfg!(windows) {
+                    // The cover is only known on Windows and Android.
+                    if b == Backdrop::Cover && !cfg!(any(windows, target_os = "android")) {
                         continue;
                     }
                     let r = ui.selectable_value(&mut self.params.backdrop, b, b.label());
-                    self.describe(&r, "What shows where the picture is dark. Black: nothing, so silence is black. Album cover: the cover of the track that is playing, blurred and dim, read from Windows on this PC. Stars have a section of their own, below.");
+                    self.describe(&r, &format!("What shows where the picture is dark. Black: nothing, so silence is black. Album cover: the cover of the track that is playing, blurred and dim, read from {} on {}. Stars have a section of their own, below.", PLAYING_FROM.0, PLAYING_FROM.1));
                 }
             });
             if self.params.backdrop != Backdrop::Off {
@@ -2395,14 +2459,16 @@ impl App {
             }
             ui.separator();
 
-            // Lyrics need to know what is playing, which only the Windows build can ask.
-            #[cfg(windows)]
+            // Lyrics need to know what is playing, which only the Windows and Android builds can ask.
+            #[cfg(any(windows, target_os = "android"))]
             {
             if self.section(ui, "Lyrics") {
             let r = ui.checkbox(&mut self.lyrics, "Show lyrics");
-            self.describe(&r, "Shows the words of the song over the picture, in time with the music. AudioVis reads the title and artist of what is playing from Windows and looks the lyrics up on lrclib.net, a free, crowd-sourced lyrics site. So while this is on, the title, artist, album and length of each track you play are sent to that site; nothing is sent while it is off. Results are kept on this PC, so each track is only asked about once. On the controller: the marker SET button.");
+            self.describe(&r, &format!("Shows the words of the song over the picture, in time with the music. AudioVis reads the title and artist of what is playing from {} and looks the lyrics up on lrclib.net, a free, crowd-sourced lyrics site. So while this is on, the title, artist, album and length of each track you play are sent to that site; nothing is sent while it is off. Results are kept on {}, so each track is only asked about once. On the controller: the marker SET button.", PLAYING_FROM.0, PLAYING_FROM.1));
             if self.lyrics {
                 ui.small(self.lyrics_status());
+                #[cfg(target_os = "android")]
+                self.android_lyrics(ui);
                 ui.horizontal(|ui| {
                     for place in LyricsPlace::ALL {
                         let r = ui.selectable_value(&mut self.params.lyrics_place, place, place.label());

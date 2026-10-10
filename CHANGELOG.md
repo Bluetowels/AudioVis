@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Lyrics, track card and album cover on Android.** The Android app now knows what is playing, so lyrics, the track card, colours from the cover and the cover background work there. For other apps' music Android requires notification access, which the Lyrics section of the panel leads to; the app's own audio file is identified from its tags, and can be given a `.lrc` file by hand. Lyrics are fetched with Android's own networking, so the app now asks for the internet permission; it is only used while "Show lyrics" is on. Windows behaviour is unchanged.
+
 ## 0.4.0 (2026-10-10)
 
 Everything new here is for Windows unless it says otherwise; the macOS and Android builds gain the parts that don't depend on knowing what is playing.
