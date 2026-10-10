@@ -310,7 +310,7 @@ Windows only.
 | Show lyrics | off | | Shows the words of the song over the picture, in time with the music |
 | Place | Bottom | Top, Middle, Bottom, Circle, Crawl | Lines across the picture at that height, round a circle about its middle, or rolling away into the distance |
 | Lyrics size | 5% of the picture's height | 2 to 12 | Height of the line being sung |
-| Lyrics strength | 0.4 | 0 to 1 | How much the words that aren't being sung show; low leaves them faint so the picture comes first |
+| Lyrics strength | 0.4 | 0 to 1 | How much the lyrics show: 0 hides them altogether, low leaves them faint so the picture comes first, high makes them solid |
 | Show the next line | on | | The line to come, small and dim, under the one being sung |
 | Lyrics sync offset | 0 ms | -1000 to 1000, in steps of 10 | Moves the lyrics earlier (negative) or later (positive); kept separately for each music app |
 

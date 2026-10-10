@@ -1420,7 +1420,9 @@ impl App {
         };
         // How much the words that are not being sung show.
         let strength = p.get(P::LyricsStrength);
-        let quiet = if tint.is_some() { 0.75 + 0.25 * strength } else { 0.10 + 0.70 * strength };
+        let quiet = if tint.is_some() { (2.2 * strength).min(1.0) } else { 0.80 * strength };
+        // At nothing, nothing shows at all, a word being sung included.
+        let shown = (strength / 0.1).min(1.0);
         // Brightness follows the bass. In HDR the words stay at the panel's
         // steady white, well under the picture's peaks.
         let bass = if p.bass_boost { self.bass_env } else { 0.0 };
@@ -1455,7 +1457,7 @@ impl App {
                     let over = if now < w.end { 1.0 } else { (-(now - w.end) / 0.12).exp() as f32 };
                     (begun * over, if now >= w.start { (-(now - w.start) / 0.22).exp() as f32 } else { 0.0 }, begun)
                 });
-                let seen = opacity(middle) * dim;
+                let seen = opacity(middle) * dim * shown;
                 let rgb: [f32; 3] = std::array::from_fn(|i| mid[i] + (hot[i] - mid[i]) * forward);
                 // In a line with word times, the words still to come hang back a little.
                 let alpha = quiet * if word.is_some() { 0.75 + 0.25 * sung } else { 1.0 };
