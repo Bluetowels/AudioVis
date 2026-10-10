@@ -179,6 +179,8 @@ struct Options {
     cover_colours: bool,
     track_card: bool,
     track_card_fly: bool,
+    /// Self-test: fly the title in at the start, as F5 does.
+    fly_title_now: bool,
     stars: bool,
     backdrop: Option<Backdrop>,
     material: Option<Material>,
@@ -212,6 +214,7 @@ impl Default for Options {
             cover_colours: false,
             track_card: false,
             track_card_fly: false,
+            fly_title_now: false,
             stars: false,
             backdrop: None,
             material: None,
@@ -255,6 +258,7 @@ fn parse_options() -> Options {
             "--cover-colours" => o.cover_colours = true,
             "--track-card" => o.track_card = true,
             "--track-card-fly" => o.track_card_fly = true,
+            "--fly-title" => o.fly_title_now = true,
             "--stars" => o.stars = true,
             "--background" => {
                 o.backdrop = args.next().and_then(|name| Backdrop::ALL.into_iter().find(|b| b.label().eq_ignore_ascii_case(&name)));
@@ -561,6 +565,10 @@ struct App {
     card: Option<(nowplaying::Track, Instant)>,
     /// How near a title flying in has come: 0 a dot in the distance, 1 filling the picture.
     card_near: f32,
+    /// Whether the card now showing is flying in or sitting in the corner.
+    card_flying: bool,
+    /// A fly-in has been asked for (F5 or a controller button) and not yet begun.
+    card_fly_asked: bool,
     /// The cover as a picture the interface can draw, and which cover (by its address).
     card_cover: Option<(usize, egui::TextureHandle)>,
     /// Whether lyrics are shown.
@@ -648,6 +656,8 @@ impl App {
         let sample_rate = capture.sample_rate();
         let (bass_window_s, detail) = (params.target(P::BassWindow) / 1000.0, params.target(P::Detail));
         let look = palette_look(&params);
+        let fly_title_now = options.fly_title_now;
+        crawl_font(&cc.egui_ctx);
         Self {
             show_panel: options.show_panel,
             fullscreen: options.fullscreen,
@@ -714,6 +724,8 @@ impl App {
             track_card_fly,
             card: None,
             card_near: 0.0,
+            card_flying: false,
+            card_fly_asked: fly_title_now,
             card_cover: None,
             lyrics,
             now_playing: None,
@@ -1204,7 +1216,8 @@ impl App {
         let wanted = (self.lyrics && self.lyrics_file.is_none())
             || self.params.palette_from_cover
             || self.params.backdrop == Backdrop::Cover
-            || self.track_card;
+            || self.track_card
+            || self.card_fly_asked;
         self.playing = if wanted { self.now_playing.get_or_insert_with(nowplaying::NowPlaying::start).now() } else { None };
     }
 
@@ -1363,6 +1376,7 @@ impl App {
         let size = ((self.params.get(P::LyricsSize) / 100.0 * picture.height()) * 2.0).round().max(16.0) / 2.0;
         match self.params.lyrics_place {
             LyricsPlace::Circle => self.draw_lyrics_arc(painter, picture, &lines, now, size),
+            LyricsPlace::Crawl => self.draw_lyrics_crawl(painter, picture, &lines, now, size),
             place => self.draw_lyrics_block(painter, picture, &lines, now, size, place),
         }
     }
@@ -1392,14 +1406,19 @@ impl App {
         now: f64,
         size: f32,
         dim: f32,
+        tint: Option<[f32; 3]>,
         place: &dyn Fn(egui::Pos2) -> Option<egui::Pos2>,
         opacity: &dyn Fn(egui::Pos2) -> f32,
     ) {
         let p = &self.params;
-        let (mid, hot) = self.lyric_colours();
+        // A set colour (and a word being sung a little paler), or the palette's.
+        let (mid, hot) = match tint {
+            Some(colour) => (colour, colour.map(|v| v + (1.0 - v) * 0.4)),
+            None => self.lyric_colours(),
+        };
         // How much the words that are not being sung show.
         let strength = p.get(P::LyricsStrength);
-        let quiet = 0.10 + 0.70 * strength;
+        let quiet = if tint.is_some() { 0.5 + 0.5 * strength } else { 0.10 + 0.70 * strength };
         // Brightness follows the bass. In HDR the words stay at the panel's
         // steady white, well under the picture's peaks.
         let bass = if p.bass_boost { self.bass_env } else { 0.0 };
@@ -1514,7 +1533,7 @@ impl App {
             let origin = egui::vec2(picture.center().x, y - anchor * height);
             let words = timed.map(|next_start| lyric_words(&galley, line, next_start)).unwrap_or_default();
             let dim = if timed.is_some() { 1.0 } else { 0.7 };
-            self.lyric_text(painter, &galley, &words, now, size, dim, &|at| Some(at + origin), &|_| opacity);
+            self.lyric_text(painter, &galley, &words, now, size, dim, None, &|at| Some(at + origin), &|_| opacity);
             height
         };
 
@@ -1544,6 +1563,90 @@ impl App {
         if let Some(line) = next.filter(|line| self.params.lyrics_preview && !line.text.is_empty()) {
             let opacity = if current.is_some() { arrive } else { 1.0 };
             text(line, None, (size * 0.5 * 2.0).round() / 2.0, middle + height / 2.0 + gap, 0.0, opacity);
+        }
+    }
+
+    /// Lyrics as the opening titles of a space film: yellow, laid back on a
+    /// plane, coming in at the bottom of the picture and rolling away up it
+    /// into the distance. The line being sung is at an easy distance to read.
+    fn draw_lyrics_crawl(&self, painter: &egui::Painter, picture: egui::Rect, lines: &[lyrics::Line], now: f64, size: f32) {
+        const YELLOW: [f32; 3] = [1.0, 0.86, 0.16];
+        /// How many times further away than the bottom edge the line being sung is.
+        const READING: f32 = 1.5;
+        /// Lines fade out between these distances.
+        const FADE: (f32, f32) = (3.2, 5.5);
+        let started = lines.partition_point(|line| line.start <= now);
+        let Some(current) = started.checked_sub(1) else { return };
+
+        // Text at the bottom edge is drawn this size; it shrinks with distance.
+        let near_size = (1.7 * size * 2.0).round() / 2.0;
+        let font = egui::FontId::new(near_size, egui::FontFamily::Name(CRAWL_FONT.into()));
+        let layout = |line: &lyrics::Line| {
+            let mut job = egui::text::LayoutJob::default();
+            job.wrap.max_width = 0.8 * picture.width();
+            job.halign = egui::Align::Center;
+            job.append(&line.text, 0.0, egui::TextFormat { font_id: font.clone(), color: egui::Color32::WHITE, ..Default::default() });
+            painter.layout_job(job)
+        };
+        let gap = 0.45 * near_size;
+        // Everything rolls away from a point above the top of the picture.
+        let horizon = picture.top() - 0.08 * picture.height();
+        let fall = picture.bottom() - horizon;
+        // Distance up the page that doubles how far away a line is.
+        let stretch = 0.75 * picture.height();
+        let smooth = |x: f32| {
+            let x = x.clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x)
+        };
+
+        // How far the page has rolled past the top of the current line: by one
+        // line and its gap in the time until the next line starts (or a few
+        // seconds, where the next is a long way off).
+        let galley = layout(&lines[current]);
+        let next_start = lines.get(current + 1).map_or(f64::MAX, |line| line.start);
+        let until_next = (next_start - lines[current].start).clamp(0.3, 6.0);
+        let rolled = (galley.size().y + gap) * ((now - lines[current].start) / until_next).clamp(0.0, 1.0) as f32;
+
+        // Draw a line whose top is `down` the page from the top of the current one.
+        let draw = |galley: &egui::Galley, words: &[LyricWord], down: f32, dim: f32| {
+            let distance = |y: f32| READING + (rolled - (down + y)) / stretch;
+            self.lyric_text(
+                painter,
+                galley,
+                words,
+                now,
+                near_size,
+                dim,
+                Some(YELLOW),
+                &|at| {
+                    let away = distance(at.y);
+                    // Nearer than this it is off the bottom of the picture anyway.
+                    (away > 0.6).then(|| egui::pos2(picture.center().x + at.x / away, horizon + fall / away))
+                },
+                &|at| 1.0 - smooth((distance(at.y) - FADE.0) / (FADE.1 - FADE.0)),
+            );
+        };
+
+        draw(&galley, &lyric_words(&galley, &lines[current], next_start), 0.0, 1.0);
+        // The lines already sung, further up the page and further away.
+        let mut down = 0.0;
+        for earlier in lines[..current].iter().rev() {
+            let galley = layout(earlier);
+            down -= galley.size().y + gap;
+            if READING + (rolled - down - galley.size().y) / stretch > FADE.1 {
+                break;
+            }
+            draw(&galley, &[], down, 0.8);
+        }
+        // The lines to come, lower down and nearer, until they are off the bottom.
+        let mut down = galley.size().y + gap;
+        for later in &lines[current + 1..] {
+            if READING + (rolled - down) / stretch < 0.9 {
+                break;
+            }
+            let galley = layout(later);
+            draw(&galley, &[], down, 0.8);
+            down += galley.size().y + gap;
         }
     }
 
@@ -1616,6 +1719,7 @@ impl App {
                 now,
                 size,
                 dim,
+                None,
                 &|at| on_picture((x + at.x) / radius, radius + tall - at.y),
                 &|at| 1.0 - smooth((((x + at.x) / radius).abs().to_degrees() - FADE.0) / (FADE.1 - FADE.0)),
             );
@@ -1679,19 +1783,23 @@ impl App {
     /// in the top-right corner of the picture.
     fn draw_track_card(&mut self, painter: &egui::Painter, picture: egui::Rect) {
         const SHOWN_S: f32 = 7.0;
-        if !self.track_card {
-            self.card = None;
-            return;
-        }
         let Some(now) = &self.playing else { return };
         let same = |a: &nowplaying::Track, b: &nowplaying::Track| a.app == b.app && a.title == b.title && a.artist == b.artist;
-        if !now.track.title.is_empty() && self.card.as_ref().is_none_or(|(track, _)| !same(track, &now.track)) {
-            self.card = Some((now.track.clone(), Instant::now()));
-            self.card_near = 0.0;
+        if self.card_fly_asked && !now.track.title.is_empty() {
+            // Asked for by hand: fly it in now, whatever the settings say.
+            (self.card, self.card_near, self.card_flying, self.card_fly_asked) = (Some((now.track.clone(), Instant::now())), 0.0, true, false);
+        } else if !self.track_card {
+            // Left alone only while one asked for by hand is still on its way.
+            if !(self.card_flying && self.card_near < 1.0) {
+                self.card = None;
+                return;
+            }
+        } else if !now.track.title.is_empty() && self.card.as_ref().is_none_or(|(track, _)| !same(track, &now.track)) {
+            (self.card, self.card_near, self.card_flying) = (Some((now.track.clone(), Instant::now())), 0.0, self.track_card_fly);
         }
         let Some((track, since)) = &self.card else { return };
         let age = since.elapsed().as_secs_f32();
-        if if self.track_card_fly { self.card_near >= 1.0 } else { age > SHOWN_S } {
+        if if self.card_flying { self.card_near >= 1.0 } else { age > SHOWN_S } {
             return;
         }
         let seen = (age / 0.4).min(1.0) * ((SHOWN_S - age) / 1.2).min(1.0);
@@ -1709,7 +1817,7 @@ impl App {
             self.card_cover = None;
         }
 
-        if self.track_card_fly {
+        if self.card_flying {
             // It comes on with the stars: at their pace when they are flying,
             // but never so fast that it cannot be read, nor so slowly that it lingers.
             let pace = if self.star_travel > 0.0 { self.star_rate.clamp(0.1, 0.2) } else { 0.14 };
@@ -1980,7 +2088,7 @@ impl App {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading("AudioVis");
             #[cfg(not(target_os = "android"))]
-            ui.small("Tab: hide panel   F11: fullscreen   right-click picture: palette");
+            ui.small("Tab: hide panel   F11: fullscreen   F5: fly the title in   right-click picture: palette");
             #[cfg(target_os = "android")]
             ui.small("Tap the picture to hide or show this panel, swipe across it for the next palette, and press and hold it (or any slider) for more.");
             let label = if self.show_hints { "Descriptions on hover: on" } else { "Descriptions on hover: off" };
@@ -2245,7 +2353,7 @@ impl App {
                 ui.horizontal(|ui| {
                     for place in LyricsPlace::ALL {
                         let r = ui.selectable_value(&mut self.params.lyrics_place, place, place.label());
-                        self.describe(&r, "Where the lyrics go. Top, Middle and Bottom show the line being sung across the picture, with the line before fading out above it and the line to come below. Circle runs them round the far side of a circle about the middle of the picture, scrolling so each word passes the top as it is sung; in 3D they lie on the picture and tilt and turn with it.");
+                        self.describe(&r, "Where the lyrics go. Top, Middle and Bottom show the line being sung across the picture, with the line before fading out above it and the line to come below. Circle runs them round the far side of a circle about the middle of the picture, scrolling past the top as they are sung; in 3D they lie on the picture and tilt and turn with it. Crawl lays them back in yellow like the opening titles of a space film: they come in at the bottom and roll away up the picture into the distance.");
                     }
                 });
                 self.slider(ui, P::LyricsSize);
@@ -2305,6 +2413,29 @@ impl App {
             }
         });
     }
+}
+
+/// The name the crawl's typeface goes by.
+const CRAWL_FONT: &str = "crawl";
+
+/// Set up the typeface for the lyrics crawl: a bold condensed gothic, as near
+/// as the system has to the one on film. It is read from the system's own
+/// fonts where there is one, and otherwise the app's usual typeface is used.
+fn crawl_font(ctx: &egui::Context) {
+    #[cfg(windows)]
+    const CANDIDATES: [&str; 3] = ["C:/Windows/Fonts/framd.ttf", "C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/segoeuib.ttf"];
+    #[cfg(target_os = "macos")]
+    const CANDIDATES: [&str; 2] = ["/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/Library/Fonts/Arial Bold.ttf"];
+    #[cfg(not(any(windows, target_os = "macos")))]
+    const CANDIDATES: [&str; 2] = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/system/fonts/Roboto-Bold.ttf"];
+    let mut fonts = egui::FontDefinitions::default();
+    let mut family = fonts.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+    if let Some(bytes) = CANDIDATES.iter().find_map(|path| std::fs::read(path).ok()) {
+        fonts.font_data.insert(CRAWL_FONT.to_string(), egui::FontData::from_owned(bytes).into());
+        family.insert(0, CRAWL_FONT.to_string());
+    }
+    fonts.families.insert(egui::FontFamily::Name(CRAWL_FONT.into()), family);
+    ctx.set_fonts(fonts);
 }
 
 /// The colours of the palette chosen in the panel.
@@ -2417,6 +2548,9 @@ impl eframe::App for App {
         if ctx.input(|i| i.key_pressed(egui::Key::F3)) {
             self.show_fps_graph = !self.show_fps_graph;
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::F5)) {
+            self.card_fly_asked = true;
+        }
         if ctx.input(|i| i.key_pressed(egui::Key::F11)) {
             self.fullscreen = !self.fullscreen;
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
@@ -2431,6 +2565,7 @@ impl eframe::App for App {
             &mut self.show_panel,
             &mut self.show_surface,
             &mut self.lyrics,
+            &mut self.card_fly_asked,
         );
         self.params.glide(dt);
         // The panel is drawn at the picture's base brightness.

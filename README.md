@@ -167,6 +167,7 @@ A USB MIDI controller plugged into the phone (with a USB OTG adapter if needed) 
 | Key | Action |
 |---|---|
 | Tab or F1 | Show or hide the settings panel |
+| F5 | Fly the playing track's cover and title in from the distance, now |
 | F11 | Toggle fullscreen (Esc leaves fullscreen) |
 | F2 | Show or hide the FPS counter |
 | F3 | Show or hide the FPS graph |
@@ -307,7 +308,7 @@ Windows only.
 | Setting | Default | Range | What it does |
 |---|---|---|---|
 | Show lyrics | off | | Shows the words of the song over the picture, in time with the music |
-| Place | Bottom | Top, Middle, Bottom, Circle | Lines across the picture at that height, or round a circle about its middle |
+| Place | Bottom | Top, Middle, Bottom, Circle, Crawl | Lines across the picture at that height, round a circle about its middle, or rolling away into the distance |
 | Lyrics size | 5% of the picture's height | 2 to 12 | Height of the line being sung |
 | Lyrics strength | 0.4 | 0 to 1 | How much the words that aren't being sung show; low leaves them faint so the picture comes first |
 | Show the next line | on | | The line to come, small and dim, under the one being sung |
@@ -316,6 +317,8 @@ Windows only.
 With Top, Middle or Bottom, the line being sung runs across the picture at that height. The line before fades out above it and the line to come waits below. Each line appears about 150 ms before it's sung.
 
 With Circle, the lyrics run round a circle about the middle of the picture and scroll, each line passing the top while it's sung; earlier lines move away to the left and the lines to come arrive from the right. In 3D the words lie on the picture, on the far side of the circle from the camera, so they tilt, turn and fly with it; steep tilts make them small, and Lyrics size makes up for it. "Show the next line" has no effect there.
+
+With Crawl, the lyrics are laid back on a plane like the opening titles of a space film: yellow, coming in at the bottom of the picture and rolling away up it into the distance, with the line being sung at an easy distance to read. It goes well with the stars. The typeface is a bold gothic read from the system's own fonts (Franklin Gothic Medium on Windows), which is close to the film's but not the same; no typeface is shipped with the app.
 
 The words take their colours from the palette and are drawn faint, so they sit in the picture instead of over it. Where the lyrics have a time for every word, the word being sung comes forward: it swells, lifts, turns bright and glows, with the glow following the bass, then settles back as the next word starts. Most lyrics on LRCLIB only time whole lines, and those are shown a line at a time with no word picked out. In HDR the words stay at the base brightness.
 
@@ -391,6 +394,7 @@ The app connects to the first MIDI input whose name contains "nanoKONTROL2". On 
 - **R button 1:** switch between cross and circle
 - **Track arrows:** previous and next palette
 - **Marker buttons:** SET turns lyrics on or off; < and > move the lyrics sync offset 10 ms earlier or later
+- **PLAY:** flies the playing track's cover and title in from the distance
 
 **Controller picture.** F4, or the "Controller" button at the top of the panel, draws the nanoKONTROL2 across the bottom of the screen with every knob, fader and button labelled with what it does. White marks show where the hardware is and blue marks show where the setting is; lit buttons are switches that are on. Right-click any control on the picture to give it a different setting or job, or to unassign it.
 

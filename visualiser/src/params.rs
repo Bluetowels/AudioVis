@@ -191,10 +191,13 @@ pub enum LyricsPlace {
     Bottom,
     /// Round a circle about the middle of the picture, scrolling.
     Circle,
+    /// Laid back on a plane and rolling away into the distance, like the
+    /// opening titles of a space film.
+    Crawl,
 }
 
 impl LyricsPlace {
-    pub const ALL: [LyricsPlace; 4] = [LyricsPlace::Top, LyricsPlace::Centre, LyricsPlace::Bottom, LyricsPlace::Circle];
+    pub const ALL: [LyricsPlace; 5] = [LyricsPlace::Top, LyricsPlace::Centre, LyricsPlace::Bottom, LyricsPlace::Circle, LyricsPlace::Crawl];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -202,6 +205,7 @@ impl LyricsPlace {
             LyricsPlace::Centre => "Middle",
             LyricsPlace::Bottom => "Bottom",
             LyricsPlace::Circle => "Circle",
+            LyricsPlace::Crawl => "Crawl",
         }
     }
 }

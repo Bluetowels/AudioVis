@@ -20,10 +20,12 @@ pub enum Action {
     /// Move the lyrics 10 ms earlier or later against the music.
     LyricsEarlier,
     LyricsLater,
+    /// Fly the playing track's cover and title in from the distance, now.
+    FlyTitle,
 }
 
 impl Action {
-    pub const ALL: [Action; 15] = [
+    pub const ALL: [Action; 16] = [
         Action::Toggle(Toggle::FlipX),
         Action::Toggle(Toggle::FlipY),
         Action::MirrorNext,
@@ -39,6 +41,7 @@ impl Action {
         Action::ToggleLyrics,
         Action::LyricsEarlier,
         Action::LyricsLater,
+        Action::FlyTitle,
     ];
 
     /// A name short enough to sit beside a button.
@@ -59,6 +62,7 @@ impl Action {
             Action::ToggleLyrics => "Lyrics",
             Action::LyricsEarlier => "Lyr -",
             Action::LyricsLater => "Lyr +",
+            Action::FlyTitle => "Title",
         }
     }
 
@@ -79,6 +83,7 @@ impl Action {
             Action::ToggleLyrics => "Lyrics on or off",
             Action::LyricsEarlier => "Move the lyrics 10 ms earlier",
             Action::LyricsLater => "Move the lyrics 10 ms later",
+            Action::FlyTitle => "Fly the playing track's cover and title in from the distance",
         }
     }
 }
@@ -131,6 +136,8 @@ impl Default for Bindings {
             (60, Action::ToggleLyrics),
             (61, Action::LyricsEarlier),
             (62, Action::LyricsLater),
+            // The PLAY button.
+            (41, Action::FlyTitle),
         ]);
         Self { continuous, buttons }
     }
@@ -305,6 +312,7 @@ impl Controller {
         show_panel: &mut bool,
         show_surface: &mut bool,
         lyrics: &mut bool,
+        fly_title: &mut bool,
     ) {
         let Some(events) = &self.events else { return };
         let messages: Vec<(u8, u8)> = events.try_iter().collect();
@@ -328,6 +336,7 @@ impl Controller {
                     Action::ToggleLyrics => *lyrics = !*lyrics,
                     Action::LyricsEarlier => params.set(P::LyricsOffset, params.target(P::LyricsOffset) - 10.0),
                     Action::LyricsLater => params.set(P::LyricsOffset, params.target(P::LyricsOffset) + 10.0),
+                    Action::FlyTitle => *fly_title = true,
                 }
                 self.pressed.insert(cc, std::time::Instant::now());
                 continue;
