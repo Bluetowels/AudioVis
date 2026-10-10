@@ -279,6 +279,7 @@ Stereo position is averaged over about 150 ms and two semitones, so it's steadie
 | 3D flight depth | 0 | 0 to 1 | 0 flies above and around; 1 flies down among the peaks |
 | 3D flight look ahead | 0 | 0 to 1 | 0 looks at the centre; 1 looks along the flight path |
 | 3D storm | 0 | 0 to 1 | Raindrops that fall, splash on the surface and evaporate |
+| Surface | Matte | Matte, Gloss, Metal, Glass | What the surface looks as if it is made of |
 
 The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low flights over a dense picture can drop below the display's refresh rate.
 
@@ -286,9 +287,13 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 
 | Setting | Default | Range | What it does |
 |---|---|---|---|
-| Palette | Ember | ten palettes | Colours from quiet to loud |
+| Palette | Ember | 22 palettes | Colours from quiet to loud |
+| Colours from the album cover | off | | Windows only: takes the palette from the cover of the track that is playing |
 | Colour banding | 0 | 0 to 1 | 0 blends smoothly; 1 gives hard-edged bands |
 | Reverse palette | off | | Swaps the palette end for end |
+| Bloom | 0.3 | 0 to 1 | A soft glow that spreads from the bright parts of the picture; 0 is off |
+| Background | Black | Black, Stars, Album cover | What shows where the picture is dark |
+| Background brightness | 0.4 | 0 to 1 | How bright the stars or cover are |
 | HDR base brightness | 200 nits | 80 to 500 | HDR only: how bright ordinary parts of the picture and the panel are |
 | HDR peak brightness | 1000 nits | 200 to 2000 | HDR only: how bright the very loudest parts go |
 | HDR test pattern | off | | HDR only: white patches at 80, 200, 400, 800 and 1600 nits, plus the base and peak |
@@ -320,8 +325,15 @@ The words take their colours from the palette and are drawn faint, so they sit i
 
 The built-in font covers Latin, Greek and Cyrillic letters; lyrics in other scripts show as empty boxes.
 
-### App
-| Setting | Default |
+**Colours from the album cover.** With this ticked, each track gets its own palette: the cover's two strongest colours, from dark to bright, with a bass colour chosen to stand apart from them. A black and white cover gives a grey picture with a red bass. Colours fade across when the track changes. With nothing playing, or a player that shows no cover, the chosen palette is used.
+
+**Background.** Black keeps the rule that silence is black. Stars is a field of stars that twinkle with the treble; flat, they drift slowly, and in 3D they surround the picture and move with the camera. Album cover is the playing track's cover, blurred and dim. Either only shows where the picture is dark.
+
+**Surface.** In 3D, Gloss adds white highlights that slide over the ridges as the camera moves, Metal mirrors a bright sky in the surface's own colour, and Glass is dim face on and bright at its edges with sharp glints. Highlights only appear where there is sound.
+
+The cover, title and artist used here and by the track card come from Windows' media controls on this PC. Nothing is sent anywhere for them; only lyrics use the network.
+
+### App| Setting | Default |
 |---|---|
 | Audio source | Default output device |
 | Window | 1280 x 720, panel shown |
@@ -330,6 +342,7 @@ The built-in font covers Latin, Greek and Cyrillic letters; lyrics in other scri
 | HDR output | off (a tick box at the top of the panel; a change applies when the app is restarted) |
 | FPS counter, FPS graph | off |
 | Show lyrics | off |
+| Show each track's title as it starts | on (Windows only: title, artist, album and cover in the top-right corner for a few seconds) |
 
 ### HDR
 

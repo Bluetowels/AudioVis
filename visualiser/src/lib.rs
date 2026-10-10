@@ -174,6 +174,7 @@ struct Options {
     lyrics_place: Option<LyricsPlace>,
     /// Self-test: colours from the cover, a background and a 3D material.
     cover_colours: bool,
+    track_card: bool,
     backdrop: Option<Backdrop>,
     material: Option<Material>,
     /// Show the lyrics in this LRC file (or the one beside this audio file,
@@ -204,6 +205,7 @@ impl Default for Options {
             lyrics: false,
             lyrics_place: None,
             cover_colours: false,
+            track_card: false,
             backdrop: None,
             material: None,
             lyrics_file: None,
@@ -244,6 +246,7 @@ fn parse_options() -> Options {
             "--lyrics" => o.lyrics = true,
             // Self-test helpers for the switches that are not sliders.
             "--cover-colours" => o.cover_colours = true,
+            "--track-card" => o.track_card = true,
             "--background" => {
                 o.backdrop = args.next().and_then(|name| Backdrop::ALL.into_iter().find(|b| b.label().eq_ignore_ascii_case(&name)));
             }
@@ -523,8 +526,14 @@ struct App {
     look: cover::Look,
     /// The colours taken from a cover, and which cover (by its address).
     cover_look: Option<(usize, cover::Look)>,
+    /// Which cover the renderer was last given (by its address; 0 for none).
+    cover_sent: usize,
     /// Whether the title and artist are shown as a track starts.
     track_card: bool,
+    /// The track on the card, and when it came on.
+    card: Option<(nowplaying::Track, Instant)>,
+    /// The cover as a picture the interface can draw, and which cover (by its address).
+    card_cover: Option<(usize, egui::TextureHandle)>,
     /// Whether lyrics are shown.
     lyrics: bool,
     /// Watches what other apps are playing; started the first time lyrics are on.
@@ -570,7 +579,7 @@ impl App {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok());
         let show_surface = options.surface || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.show_surface));
-        let track_card = options.selftest.is_none() && saved.as_ref().is_none_or(|s| s.track_card);
+        let track_card = options.track_card || (options.selftest.is_none() && saved.as_ref().is_none_or(|s| s.track_card));
         let lyrics = options.lyrics || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.lyrics));
         let lyrics_offsets = saved.as_ref().filter(|_| options.selftest.is_none()).map(|s| s.lyrics_offsets.clone()).unwrap_or_default();
         let lyrics_file = options.lyrics_file.as_deref().and_then(lyrics::sidecar).map(Into::into);
@@ -660,7 +669,10 @@ impl App {
             playing: None,
             look,
             cover_look: None,
+            cover_sent: 0,
             track_card,
+            card: None,
+            card_cover: None,
             lyrics,
             now_playing: None,
             lookup: lyrics::Lookup::new(config_dir().join("lyrics")),
@@ -947,6 +959,12 @@ impl App {
         (gain, glow)
     }
 
+    /// How much treble is showing, 0 to 1: the stars twinkle with it.
+    fn treble(&self) -> f32 {
+        let top = &self.shown[0][2 * N_BINS / 3..];
+        (3.0 * top.iter().sum::<f32>() / top.len() as f32).min(1.0)
+    }
+
     /// How far out and how strong the bass pulse is this frame.
     fn pulse(&self) -> (f32, f32) {
         let p = &self.params;
@@ -1113,7 +1131,7 @@ impl App {
             ],
             accent: [accent[0], accent[1], accent[2], p.get(P::BassGlow)],
             extra: [count as f32, p.get(P::Banding), p.get(P::Angular), (p.bass_style == BassStyle::Underlay) as u8 as f32],
-            stereo: [p.stereo as u8 as f32, p.get(P::StereoEmphasis), p.get(P::SurroundAmount), 0.0],
+            stereo: [p.stereo as u8 as f32, p.get(P::StereoEmphasis), p.get(P::SurroundAmount), p.material as u8 as f32],
             surround: [surround[0], surround[1], surround[2], 1.0],
             relief: [
                 (p.get(P::Tilt) > 0.05 || p.get(P::Flight) > 0.0) as u8 as f32,
@@ -1130,6 +1148,7 @@ impl App {
                 p.get(P::HdrPeak).max(p.get(P::HdrBase)) / 80.0,
                 (self.hdr_active && self.hdr_pattern) as u8 as f32,
             ],
+            post: [p.get(P::Bloom), p.backdrop as u8 as f32, p.get(P::BackdropAmount), self.treble()],
             stops,
         }
     }
@@ -1168,6 +1187,19 @@ impl App {
         self.look.stops.iter_mut().zip(&wanted.stops).for_each(|(from, to)| ease(from, to));
         ease(&mut self.look.accent, &wanted.accent);
         ease(&mut self.look.surround, &wanted.surround);
+    }
+
+    /// The playing track's cover, the first time it is seen, for the renderer
+    /// to take a copy of. A track with none gets a black one.
+    fn new_cover(&mut self) -> Option<std::sync::Arc<nowplaying::Cover>> {
+        let cover = self.playing.as_ref().and_then(|now| now.cover.clone());
+        let address = cover.as_ref().map_or(0, |c| std::sync::Arc::as_ptr(c) as usize);
+        if address == self.cover_sent {
+            return None;
+        }
+        self.cover_sent = address;
+        let blank = || nowplaying::Cover { rgba: vec![0; (4 * nowplaying::COVER_SIZE * nowplaying::COVER_SIZE) as usize] };
+        Some(cover.unwrap_or_else(|| std::sync::Arc::new(blank())))
     }
 
     /// The track as the lyrics search wants it.
@@ -1559,6 +1591,72 @@ impl App {
         }
     }
 
+    /// The title, artist and cover of a track for a few seconds as it starts,
+    /// in the top-right corner of the picture.
+    fn draw_track_card(&mut self, painter: &egui::Painter, picture: egui::Rect) {
+        const SHOWN_S: f32 = 7.0;
+        if !self.track_card {
+            self.card = None;
+            return;
+        }
+        let Some(now) = &self.playing else { return };
+        let same = |a: &nowplaying::Track, b: &nowplaying::Track| a.app == b.app && a.title == b.title && a.artist == b.artist;
+        if !now.track.title.is_empty() && self.card.as_ref().is_none_or(|(track, _)| !same(track, &now.track)) {
+            self.card = Some((now.track.clone(), Instant::now()));
+        }
+        let Some((track, since)) = &self.card else { return };
+        let age = since.elapsed().as_secs_f32();
+        if age > SHOWN_S {
+            return;
+        }
+        let seen = (age / 0.4).min(1.0) * ((SHOWN_S - age) / 1.2).min(1.0);
+
+        // The cover arrives a moment after the title; it is added when it does.
+        if let Some(cover) = &now.cover {
+            let address = std::sync::Arc::as_ptr(cover) as usize;
+            if self.card_cover.as_ref().is_none_or(|(of, _)| *of != address) {
+                let side = nowplaying::COVER_SIZE as usize;
+                let pixels = cover.rgba.chunks_exact(4).map(|p| egui::Color32::from_rgb(p[0], p[1], p[2])).collect();
+                let image = egui::ColorImage::new([side, side], pixels);
+                self.card_cover = Some((address, painter.ctx().load_texture("cover", image, egui::TextureOptions::LINEAR)));
+            }
+        } else {
+            self.card_cover = None;
+        }
+
+        let wrap = (0.3 * picture.width()).max(160.0);
+        let line = |text: &str, size: f32, colour: egui::Color32| {
+            painter.layout(text.to_string(), egui::FontId::proportional(size), colour.gamma_multiply(seen), wrap)
+        };
+        let lines = [
+            line(&track.title, 20.0, egui::Color32::WHITE),
+            line(&track.artist, 15.0, egui::Color32::from_gray(210)),
+            line(&track.album, 12.0, egui::Color32::from_gray(150)),
+        ];
+        let text_width = lines.iter().map(|g| g.size().x).fold(0.0, f32::max);
+        let text_height: f32 = lines.iter().map(|g| g.size().y + 2.0).sum();
+        let side = if self.card_cover.is_some() { text_height.max(56.0) } else { 0.0 };
+        let pad = 10.0;
+        let size = egui::vec2(side + if side > 0.0 { pad } else { 0.0 } + text_width + 2.0 * pad, side.max(text_height) + 2.0 * pad);
+        // It slides in from the edge as it appears.
+        let corner = picture.right_top() + egui::vec2(-size.x - 14.0 + 20.0 * (1.0 - (age / 0.4).min(1.0)), 14.0);
+        let card = egui::Rect::from_min_size(corner, size);
+        painter.rect_filled(card, 8.0, egui::Color32::from_black_alpha((150.0 * seen) as u8));
+        let mut at = card.min + egui::vec2(pad, pad);
+        if let Some((_, texture)) = &self.card_cover {
+            let image = egui::Rect::from_min_size(at, egui::vec2(side, side));
+            let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            painter.image(texture.id(), image, whole, egui::Color32::WHITE.gamma_multiply(seen));
+            at.x += side + pad;
+        }
+        at.y += 0.5 * (size.y - 2.0 * pad - text_height);
+        for galley in lines {
+            let height = galley.size().y + 2.0;
+            painter.galley(at, galley, egui::Color32::WHITE);
+            at.y += height;
+        }
+    }
+
     /// FPS counter and graph in the top-left corner of the picture.
     fn draw_fps(&self, painter: &egui::Painter, picture: egui::Rect) {
         let origin = picture.left_top() + egui::vec2(10.0, 8.0);
@@ -1747,6 +1845,12 @@ impl App {
                 let r = ui.toggle_value(&mut self.show_fps_graph, "FPS graph");
                 self.describe(&r, "Show a graph of the frame rate over the last two seconds in the top-left corner of the picture, so dips and stutters are visible. Also on F3.");
             });
+            // What other apps are playing is only known on Windows.
+            #[cfg(windows)]
+            {
+            let r = ui.checkbox(&mut self.track_card, "Show each track's title as it starts");
+            self.describe(&r, "When a new track starts in a music app, show its title, artist, album and cover in the top-right corner of the picture for a few seconds. These are read from Windows on this PC; nothing is sent anywhere.");
+            }
             // HDR output has only been built and tried on Windows.
             #[cfg(windows)]
             {
@@ -1919,6 +2023,13 @@ impl App {
             for id in [P::Tilt, P::ReliefHeight, P::Orbit, P::Flight, P::FlightDepth, P::LookAhead, P::Storm] {
                 self.slider(ui, id);
             }
+            ui.horizontal(|ui| {
+                ui.label("Surface");
+                for m in Material::ALL {
+                    let r = ui.selectable_value(&mut self.params.material, m, m.label());
+                    self.describe(&r, "What the 3D surface looks as if it is made of. Matte: plain light and shade. Gloss: shiny plastic, with white highlights that slide over the ridges as the camera moves. Metal: polished, mirroring a bright sky in its own colour. Glass: dim face on and bright at the edges, with sharp glints. Highlights only appear where there is sound.");
+                }
+            });
             }
             ui.separator();
 
@@ -1930,6 +2041,21 @@ impl App {
             self.describe(&r, "Take the colours from the cover of whatever track is playing, so each track has its own look: its two strongest colours from dark to bright, with a bass colour chosen to stand apart from them. The cover is read from Windows on this PC; nothing is sent anywhere. With nothing playing, or a player that shows no cover, the palette above is used.");
             }
             self.slider(ui, P::Banding);
+            self.slider(ui, P::Bloom);
+            ui.horizontal(|ui| {
+                ui.label("Background");
+                for b in Backdrop::ALL {
+                    // The cover is only known on Windows.
+                    if b == Backdrop::Cover && !cfg!(windows) {
+                        continue;
+                    }
+                    let r = ui.selectable_value(&mut self.params.backdrop, b, b.label());
+                    self.describe(&r, "What shows where the picture is dark. Black: nothing, so silence is black. Stars: a field of stars that twinkle with the treble; in 3D they surround the picture and move with the camera. Album cover: the cover of the track that is playing, blurred and dim, read from Windows on this PC.");
+                }
+            });
+            if self.params.backdrop != Backdrop::Off {
+                self.slider(ui, P::BackdropAmount);
+            }
             if self.hdr_active {
                 self.slider(ui, P::HdrBase);
                 self.slider(ui, P::HdrPeak);
@@ -2170,9 +2296,15 @@ impl eframe::App for App {
             self.aspect = rect.width() / rect.height().max(1.0);
             ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
                 rect,
-                render::Frame { uniforms: self.uniforms(gain, glow, rect.width() / rect.height().max(1.0)), levels },
+                render::Frame {
+                    uniforms: self.uniforms(gain, glow, rect.width() / rect.height().max(1.0)),
+                    levels,
+                    size: [(rect.width() * ctx.pixels_per_point()).round() as u32, (rect.height() * ctx.pixels_per_point()).round() as u32],
+                    cover: self.new_cover(),
+                },
             ));
             self.draw_lyrics(ui.painter(), rect);
+            self.draw_track_card(ui.painter(), rect);
             self.draw_fps(ui.painter(), rect);
             if self.hdr_active && self.hdr_pattern {
                 let labels = [
@@ -2270,7 +2402,7 @@ impl eframe::App for App {
                 }
                 // The cover as read from the player, beside the screenshot, to compare the colours with.
                 if let Some(cover) = self.playing.as_ref().and_then(|now| now.cover.as_ref()) {
-                    let _ = image::save_buffer(path.with_extension("cover.png"), &cover.rgba, cover.size as u32, cover.size as u32, image::ColorType::Rgba8);
+                    let _ = image::save_buffer(path.with_extension("cover.png"), &cover.rgba, nowplaying::COVER_SIZE, nowplaying::COVER_SIZE, image::ColorType::Rgba8);
                 }
                 if self.params.palette_from_cover {
                     let hex = |c: &[f32; 3]| format!("#{:02x}{:02x}{:02x}", (c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8);

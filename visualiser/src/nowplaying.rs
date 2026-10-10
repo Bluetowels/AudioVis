@@ -17,10 +17,11 @@ pub struct Track {
     pub duration: f64,
 }
 
-/// A track's cover picture, shrunk to a small square.
+/// Side of the square a cover is shrunk to, in pixels.
+pub const COVER_SIZE: u32 = 96;
+
+/// A track's cover picture, shrunk to a square `COVER_SIZE` on a side.
 pub struct Cover {
-    /// Pixels along each side.
-    pub size: usize,
     /// Red, green, blue and an unused byte for each pixel, row by row from the top.
     pub rgba: Vec<u8>,
 }
@@ -74,7 +75,7 @@ impl NowPlaying {
 
 #[cfg(windows)]
 mod windows_media {
-    use super::{Cover, Shared, Track};
+    use super::{COVER_SIZE, Cover, Shared, Track};
     use std::sync::mpsc::{Sender, channel};
     use std::sync::{Arc, Mutex, Weak};
     use std::time::{Duration, Instant};
@@ -130,8 +131,6 @@ mod windows_media {
         }
     }
 
-    /// Side of the square the cover is shrunk to, in pixels.
-    const COVER_SIZE: u32 = 96;
     /// Players often hand over the cover a moment after the title, so it is
     /// asked for this many times as a track starts.
     const COVER_TRIES: u8 = 3;
@@ -154,7 +153,7 @@ mod windows_media {
             )?
             .join()?
             .DetachPixelData()?;
-        Ok(Cover { size: COVER_SIZE as usize, rgba: pixels.to_vec() })
+        Ok(Cover { rgba: pixels.to_vec() })
     }
 
     /// What one look at a session gave.

@@ -17,7 +17,8 @@ struct Uniforms {
     // number of palette colours, banding (0 smooth .. 1 hard steps), circle angular pattern,
     // bass style (0 pulse from the middle, 1 fill dark areas)
     extra: vec4<f32>,
-    // stereo on (1) or off (0), stereo emphasis, surround colour amount, unused
+    // stereo on (1) or off (0), stereo emphasis, surround colour amount,
+    // 3D material (0 matte, 1 gloss, 2 metal, 3 glass)
     stereo: vec4<f32>,
     // colour for sound where left and right move against each other
     surround: vec4<f32>,
@@ -30,6 +31,8 @@ struct Uniforms {
     sim: vec4<f32>,
     // HDR output on (1) or off (0), base brightness and peak brightness in units of 80 nits, test pattern on (1)
     hdr: vec4<f32>,
+    // bloom amount, background (0 black, 1 stars, 2 album cover), background brightness, treble level (0..1)
+    post: vec4<f32>,
     // black, then up to eight colours from quiet to loud
     stops: array<vec4<f32>, 9>,
 };
@@ -42,6 +45,9 @@ struct Uniforms {
 @group(0) @binding(1) var levels: texture_2d<f32>;
 // The picture as a square map, drawn by `fs_map` at the start of each 3D frame:
 // red is brightness, green is the out-of-step amount.
+// The cover of the track that is playing, as a small square.
+@group(0) @binding(2) var cover: texture_2d<f32>;
+@group(0) @binding(3) var cover_sampler: sampler;
 @group(1) @binding(0) var field_map: texture_2d<f32>;
 @group(1) @binding(1) var field_sampler: sampler;
 
@@ -473,8 +479,28 @@ fn relief_view(screen: vec2<f32>) -> vec3<f32> {
     var colour = shade(vec2<f32>(hit.x / aspect + 0.5, hit.y + 0.5), value);
 
     // Light from the upper left so slopes facing it are brighter; distance dims gently.
-    let light = max(dot(normal, normalize(vec3<f32>(-0.35, 0.45, 0.8))), 0.0);
-    colour *= 0.55 + 0.75 * light;
+    let sun = normalize(vec3<f32>(-0.35, 0.45, 0.8));
+    let light = max(dot(normal, sun), 0.0);
+    // What the surface is made of. Highlights only show where there is
+    // sound, so silence stays black whatever the material.
+    let material = u.stereo.w;
+    let present = smoothstep(0.02, 0.25, max(colour.r, max(colour.g, colour.b)));
+    let glint = max(dot(normal, normalize(sun - ray)), 0.0);
+    if (material < 0.5) {
+        colour *= 0.55 + 0.75 * light;
+    } else if (material < 1.5) {
+        // Gloss: shiny plastic, with a white highlight where a slope catches the light.
+        colour = colour * (0.50 + 0.70 * light) + vec3<f32>(0.75 * pow(glint, 48.0) * present);
+    } else if (material < 2.5) {
+        // Metal: little light of its own; it mirrors a bright sky in its own colour.
+        let mirrored = reflect(ray, normal);
+        let sky = smoothstep(-0.25, 0.75, mirrored.z) * (0.75 + 0.25 * sin(mirrored.x * 7.0 + mirrored.y * 5.0));
+        colour = colour * (0.30 + 0.35 * light + 1.00 * sky) + mix(colour, vec3<f32>(1.0), 0.45) * (1.3 * pow(glint, 90.0) * present);
+    } else {
+        // Glass: dim face on, bright where it is seen edge on, with sharp glints.
+        let rim = pow(1.0 - max(dot(normal, -ray), 0.0), 3.0);
+        colour = colour * (0.35 + 0.40 * light) + mix(colour, vec3<f32>(1.0), 0.7) * (0.85 * rim * present) + vec3<f32>(pow(glint, 200.0) * present);
+    }
     if (u.relief.z > 0.0) { colour = wet(colour, hit.xy, h, slope); }
     colour *= exp(-0.22 * max(t_hit - distance, 0.0)) * (1.0 - smoothstep(0.5 * reach, 0.95 * reach, t_hit - t_start));
     return clamp(colour, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -503,14 +529,90 @@ fn test_pattern(uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(vec3<f32>(level), 1.0);
 }
 
+// ---------------------------------------------------------------------------
+// Background: what shows where the picture is dark.
+
+// Stars at a point of a flat sky, in three sizes. They twinkle, more so
+// with treble in the music.
+fn starfield(p: vec2<f32>) -> f32 {
+    let time = u.relief.w;
+    var light = 0.0;
+    for (var layer = 0; layer < 3; layer++) {
+        let scale = 26.0 * pow(2.1, f32(layer));
+        let g = p * scale + f32(layer) * 17.3;
+        let cell = floor(g);
+        let rnd = hash(cell);
+        if (rnd < 0.90) { continue; }
+        let centre = (vec2<f32>(hash(cell + 3.1), hash(cell + 7.7)) - 0.5) * 0.6;
+        let d = length(fract(g) - 0.5 - centre);
+        let size = (rnd - 0.90) * 10.0;
+        let twinkle = 0.65 + 0.35 * sin(time * (1.5 + 5.0 * hash(cell + 1.7)) + 40.0 * rnd) * (0.35 + 0.65 * u.post.w);
+        light += (0.35 + 0.65 * size) * twinkle * smoothstep(0.05 + 0.07 * size, 0.0, d) / (1.0 + 0.6 * f32(layer));
+    }
+    return light;
+}
+
+// The direction a screen point looks in, in 3D.
+fn view_ray(screen: vec2<f32>) -> vec3<f32> {
+    let spread = 0.5 / 1.3;
+    let forward = normalize(u.cam_target.xyz - u.cam_eye.xyz);
+    let right = normalize(cross(forward, vec3<f32>(0.0, 0.0, 1.0)));
+    let up = cross(right, forward);
+    let s = screen * 2.0 - 1.0;
+    return normalize(forward + right * (s.x * u.circle.w * spread) + up * (s.y * spread));
+}
+
+// The background behind a screen point.
+fn backdrop(uv: vec2<f32>) -> vec3<f32> {
+    let mode = u.post.y;
+    if (mode < 0.5) { return vec3<f32>(0.0); }
+    if (mode < 1.5) {
+        // Flat, the stars drift slowly. In 3D they are fixed in the sky all
+        // round, and seen through the black ground, so they move with the camera.
+        var p = (uv - 0.5) * vec2<f32>(u.circle.w, 1.0) + u.relief.w * vec2<f32>(0.004, 0.0012);
+        if (u.relief.x > 0.5) {
+            let ray = view_ray(uv);
+            p = vec2<f32>(atan2(ray.x, ray.y) * 0.6, ray.z * 1.2);
+        }
+        return vec3<f32>(0.80, 0.88, 1.00) * starfield(p) * u.post.z;
+    }
+    // The cover, filling the picture, blurred by averaging a ring of samples.
+    var c = (uv - 0.5) * vec2<f32>(1.0, -1.0);
+    if (u.circle.w > 1.0) { c.y /= u.circle.w; } else { c.x *= u.circle.w; }
+    var sum = textureSampleLevel(cover, cover_sampler, c + 0.5, 0.0).rgb;
+    for (var k = 0; k < 12; k++) {
+        let a = 6.2831853 * f32(k) / 12.0;
+        let r = select(0.035, 0.07, k % 2 == 0);
+        sum += textureSampleLevel(cover, cover_sampler, c + 0.5 + r * vec2<f32>(cos(a), sin(a)), 0.0).rgb;
+    }
+    return sum / 13.0 * 0.30 * u.post.z;
+}
+
+// The picture before it is fitted to the display: flat or 3D, over the background.
+fn scene(uv: vec2<f32>) -> vec3<f32> {
+    var colour: vec3<f32>;
+    if (u.relief.x > 0.5) { colour = relief_view(uv); } else { colour = shade(uv, field(uv)); }
+    if (u.post.y > 0.5) {
+        let brightest = max(colour.r, max(colour.g, colour.b));
+        colour += backdrop(uv) * (1.0 - smoothstep(0.0, 0.45, brightest));
+    }
+    return colour;
+}
+
 @fragment
 fn fs(in: VertexOut) -> @location(0) vec4<f32> {
     if (u.hdr.w > 0.5) {
         let tile = test_pattern(in.uv);
         if (tile.a > 0.5) { return tile; }
     }
-    if (u.relief.x > 0.5) { return vec4<f32>(to_display(relief_view(in.uv)), 1.0); }
-    return vec4<f32>(to_display(shade(in.uv, field(in.uv))), 1.0);
+    return vec4<f32>(to_display(scene(in.uv)), 1.0);
+}
+
+// With bloom on, the picture is drawn to a texture of its own first and
+// fitted to the display afterwards (see post.wgsl).
+@fragment
+fn fs_scene(in: VertexOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(scene(in.uv), 1.0);
 }
 
 // ---------------------------------------------------------------------------
