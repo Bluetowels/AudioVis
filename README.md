@@ -135,7 +135,7 @@ The macOS build is experimental: it is built and started automatically, but has 
 
 ### Android
 
-The Android build is experimental: it is built automatically and started in an emulator, but has not yet been tried on a real phone. It needs Android 10 or later and a graphics chip with Vulkan. Copy the APK to the phone and open it; Android asks once whether to allow installing apps from that source.
+The Android build is experimental: it is built automatically and started in an emulator, and has so far been tried on one real phone, a Pixel 11 Pro XL. If it stops by itself, the next time it is opened it first shows what is known about why, with a button to send that on. It needs Android 10 or later and a graphics chip with Vulkan. Copy the APK to the phone and open it; Android asks once whether to allow installing apps from that source.
 
 It runs in landscape and fills the screen. A first run shows the built-in test signal, because every real source needs a permission. Choose a source under Audio source in the panel:
 

@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 (2026-10-10)
+
+An Android release; the Windows and macOS apps are the same as 0.4.0 apart from the version number.
 
 - **Lyrics, track card and album cover on Android.** The Android app now knows what is playing, so lyrics, the track card, colours from the cover and the cover background work there. For other apps' music Android requires notification access, which the Lyrics section of the panel leads to; the app's own audio file is identified from its tags, and can be given a `.lrc` file by hand. Lyrics are fetched with Android's own networking, so the app now asks for the internet permission; it is only used while "Show lyrics" is on. Windows behaviour is unchanged.
+- **Android: tried on a real phone, and a crash at start fixed.** The app now runs on a Pixel 11 Pro XL. On that phone's graphics chip the app could close a moment after opening, when the screen was set up a second time before the chip had finished its earlier work; it now waits and tries again.
+- **Android: says why it stopped.** If the app stops by itself, the next time it is opened it first shows what is known about why, with a button to send that on.
 
 ## 0.4.0 (2026-10-10)
 
