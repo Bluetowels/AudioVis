@@ -296,6 +296,8 @@ The 3D view is the heaviest part of the app. At 3840 x 2160, steep tilts or low 
 | Bloom | 0.3 | 0 to 1 | A soft glow that spreads from the bright parts of the picture; 0 is off |
 | Background | Black | Black, Stars, Album cover | What shows where the picture is dark |
 | Background brightness | 0.4 | 0 to 1 | How bright the stars or cover are |
+| Star flight speed | 0 | 0 to 2 | Stars background: above 0, the view flies forward through the stars without end |
+| Star flight bass | 0 | -1 to 1 | Above 0, each bass hit surges the flight forward; below 0, each hit holds it back |
 | HDR base brightness | 200 nits | 80 to 500 | HDR only: how bright ordinary parts of the picture and the panel are |
 | HDR peak brightness | 1000 nits | 200 to 2000 | HDR only: how bright the very loudest parts go |
 | HDR test pattern | off | | HDR only: white patches at 80, 200, 400, 800 and 1600 nits, plus the base and peak |
@@ -331,7 +333,7 @@ The built-in font covers Latin, Greek and Cyrillic letters; lyrics in other scri
 
 **Palette drift.** Smooth palettes drift through the other smooth ones in turn, and the abrupt ones (Rainbow, Zigzag, Candy, Contour, Harlequin, Circuit, Tropic, Glitch, Stained glass and Wasp) through each other, starting from the chosen palette. While a cover's colours are showing, they take over.
 
-**Background.** Black keeps the rule that silence is black. Stars is a field of stars that twinkle with the treble; flat, they drift slowly, and in 3D they surround the picture and move with the camera. Album cover is the playing track's cover, blurred and dim. Either only shows where the picture is dark.
+**Background.** Black keeps the rule that silence is black. Stars is a field of stars that twinkle with the treble; flat, they drift slowly, and in 3D they surround the picture and move with the camera. Album cover is the playing track's cover, blurred and dim. Either only shows where the picture is dark. With Star flight speed above 0 the view flies forward through the stars: they come up out of the distance and rush past the edges. The stars are worked out as they are needed, not stored, so the flight never ends or loops. Star flight bass ties its speed to the same bass as the bass pulse, up to five times the speed on a hit at 1, or down to a standstill at -1.
 
 **Surface.** In 3D, Gloss adds white highlights that slide over the ridges as the camera moves, Metal mirrors a bright sky in the surface's own colour, and Glass is dim face on and bright at its edges with sharp glints. Highlights only appear where there is sound.
 

@@ -46,6 +46,8 @@ pub enum P {
     BackdropAmount,
     PaletteDrift,
     SurfaceAmount,
+    StarSpeed,
+    StarBass,
 }
 
 pub struct Def {
@@ -75,7 +77,7 @@ const fn def(
     Def { id, key, name, unit, min, max, default, log, help }
 }
 
-pub const N_PARAMS: usize = 40;
+pub const N_PARAMS: usize = 42;
 pub const N_PALETTES: usize = 28;
 
 pub const DEFS: [Def; N_PARAMS] = [
@@ -119,6 +121,8 @@ pub const DEFS: [Def; N_PARAMS] = [
     def(P::BackdropAmount, "backdrop_amount", "Background brightness", "", 0.0, 1.0, 0.4, false, "How bright the background is. It only shows where the picture is dark, and is kept well below the picture so the music still stands out."),
     def(P::PaletteDrift, "palette_drift", "Palette drift", "s", 0.0, 120.0, 0.0, false, "Above 0, the colours do not stay still: they blend slowly from the chosen palette to the next of its kind and on through the rest, spending this many seconds on each. Smooth palettes drift through the smooth ones, and the abrupt ones (Rainbow, Zigzag, Candy and the like) through each other. 0 keeps the chosen palette. Colours from the album cover take over while a cover is showing."),
     def(P::SurfaceAmount, "surface_amount", "Surface strength", "", 0.0, 1.0, 1.0, false, "How strongly the 3D surface takes on the chosen look. 0 is plain matte; 1 is fully gloss, metal or glass."),
+    def(P::StarSpeed, "star_speed", "Star flight speed", "", 0.0, 2.0, 0.0, false, "With the Stars background: above 0, the view flies forward through the stars, which come up out of the distance and rush past the edges of the picture without end. The value is how fast. 0 leaves the stars where they are."),
+    def(P::StarBass, "star_bass", "Star flight bass", "", -1.0, 1.0, 0.0, false, "Ties the flight through the stars to the bass. Above 0, each bass hit is a surge forward, up to five times the speed at 1. Below 0, each hit holds the flight back, to a standstill at -1. 0 flies at a steady speed. It follows the same bass as the bass pulse, so Bass cutoff and Bass release shape it too."),
 ];
 
 pub fn def_of(id: P) -> &'static Def {

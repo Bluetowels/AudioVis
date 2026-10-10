@@ -4,7 +4,7 @@
 
 - **More colour.** Eighteen new palettes, six of them abrupt like Candy and Zigzag; palette drift, which blends slowly from one palette to the next; and on Windows the palette can be taken from the cover of the track that is playing.
 - **Bloom.** A soft glow round the bright parts of the picture, on by default at a low setting.
-- **Backgrounds.** Stars that twinkle with the treble and move with the 3D camera, or the playing track's cover, blurred and dim. Off by default.
+- **Backgrounds.** Stars that twinkle with the treble and move with the 3D camera, with an endless flight through them that can surge or slow with the bass, or the playing track's cover, blurred and dim. Off by default.
 - **3D surfaces.** Gloss, metal and glass, with highlights that move as the camera does, and a strength slider.
 - **Track card (Windows).** Title, artist, album and cover for a few seconds as each track starts.
 - **Lyrics (Windows).** The words of the song can be shown over the picture in time with the music: the line being sung in the middle, the line before fading out and the line to come below. The track is read from Windows' media controls and the lyrics come from LRCLIB. Off by default, because turning it on sends the title and artist of what you play to lrclib.net. The words take the palette's colours and stay faint; where the lyrics time every word, the word being sung swells and glows. They can sit at the top, middle or bottom, or run round a circle that follows the 3D view. Size, strength, next-line preview and a per-app sync offset are adjustable, and the controller's marker buttons turn lyrics on and off and nudge the offset.

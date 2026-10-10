@@ -528,6 +528,8 @@ struct App {
     cover_look: Option<(usize, cover::Look)>,
     /// How far palette drift has gone, in palettes.
     palette_drift: f32,
+    /// How far the flight through the stars has gone; 0 when it is off.
+    star_travel: f32,
     /// Which cover the renderer was last given (by its address; 0 for none).
     cover_sent: usize,
     /// Whether the title and artist are shown as a track starts.
@@ -672,6 +674,7 @@ impl App {
             look,
             cover_look: None,
             palette_drift: 0.0,
+            star_travel: 0.0,
             cover_sent: 0,
             track_card,
             card: None,
@@ -1144,7 +1147,7 @@ impl App {
             ],
             cam_eye: [eye[0], eye[1], eye[2], 0.0],
             cam_target: [target[0], target[1], target[2], 0.0],
-            sim: [self.frame_dt, (p.get(P::Storm) * render::MAX_DROPS as f32).floor(), p.get(P::SurfaceAmount), 0.0],
+            sim: [self.frame_dt, (p.get(P::Storm) * render::MAX_DROPS as f32).floor(), p.get(P::SurfaceAmount), self.star_travel],
             hdr: [
                 self.hdr_active as u8 as f32,
                 p.get(P::HdrBase) / 80.0,
@@ -2102,6 +2105,10 @@ impl App {
             if self.params.backdrop != Backdrop::Off {
                 self.slider(ui, P::BackdropAmount);
             }
+            if self.params.backdrop == Backdrop::Stars {
+                self.slider(ui, P::StarSpeed);
+                self.slider(ui, P::StarBass);
+            }
             if self.hdr_active {
                 self.slider(ui, P::HdrBase);
                 self.slider(ui, P::HdrPeak);
@@ -2322,6 +2329,12 @@ impl eframe::App for App {
         self.update_look(dt);
         let (gain, glow) = self.analyse(dt);
         self.update_camera(dt, gain, glow);
+        // The flight through the stars: a bass hit surges it forward or holds
+        // it back. Kept small so it stays exact, and never quite 0 while flying.
+        let star_speed = self.params.get(P::StarSpeed);
+        let with_bass = self.params.get(P::StarBass);
+        let pace = if with_bass >= 0.0 { 1.0 + 4.0 * with_bass * self.bass_env } else { 1.0 + with_bass * self.bass_env };
+        self.star_travel = if star_speed > 0.001 { (self.star_travel + 0.12 * star_speed * pace * dt) % 4096.0 + 1e-6 } else { 0.0 };
 
         if self.show_panel {
             egui::Panel::right("controls").resizable(false).default_size(300.0).show(ui, |ui| self.panel(ui));

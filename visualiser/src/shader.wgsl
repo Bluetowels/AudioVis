@@ -27,7 +27,8 @@ struct Uniforms {
     // 3D camera position and the point it looks at (ground units; z is height)
     cam_eye: vec4<f32>,
     cam_target: vec4<f32>,
-    // seconds since the last frame, number of raindrops in use, 3D material strength (0 matte .. 1 full), unused
+    // seconds since the last frame, number of raindrops in use, 3D material strength (0 matte .. 1 full),
+    // how far the flight through the stars has gone (0 when it is off)
     sim: vec4<f32>,
     // HDR output on (1) or off (0), base brightness and peak brightness in units of 80 nits, test pattern on (1)
     hdr: vec4<f32>,
@@ -554,6 +555,36 @@ fn starfield(p: vec2<f32>) -> f32 {
     return light;
 }
 
+// Flying forward through the stars. Nothing is stored: the stars are worked
+// out from where they must be. Space is cut into sheets at different
+// distances, each sheet comes steadily nearer, and as one passes the camera
+// it starts again in the far distance with a fresh scatter of stars, so the
+// flight never ends and never repeats on a beat.
+fn star_flight(p: vec2<f32>) -> f32 {
+    let time = u.relief.w;
+    let sheets = 9;
+    var light = 0.0;
+    for (var i = 0; i < sheets; i++) {
+        let travel = f32(i) / f32(sheets) + u.sim.w;
+        let closeness = fract(travel);                 // 0 far away .. 1 passing the camera
+        let lap = floor(travel);                 // how many times this sheet has come round
+        // Far sheets are seen small, so their stars sit close together and
+        // crawl; near ones spread out and rush past the edges.
+        let g = p * mix(34.0, 1.6, closeness * closeness) + vec2<f32>(f32(i) * 31.7 + lap * 13.1, f32(i) * 17.3 - lap * 7.9);
+        let cell = floor(g);
+        let rnd = hash(cell);
+        if (rnd < 0.72) { continue; }
+        let centre = (vec2<f32>(hash(cell + 3.1), hash(cell + 7.7)) - 0.5) * 0.7;
+        let d = length(fract(g) - 0.5 - centre);
+        let size = (rnd - 0.72) / 0.28;
+        let twinkle = 0.75 + 0.25 * sin(time * (1.5 + 5.0 * hash(cell + 1.7)) + 40.0 * rnd) * (0.35 + 0.65 * u.post.w);
+        // They come up out of the dark and are gone as they go by.
+        let fade = smoothstep(0.0, 0.25, closeness) * (1.0 - smoothstep(0.88, 1.0, closeness));
+        light += (0.3 + 0.7 * size) * twinkle * fade * smoothstep(0.035 + 0.03 * size, 0.0, d);
+    }
+    return light;
+}
+
 // The direction a screen point looks in, in 3D.
 fn view_ray(screen: vec2<f32>) -> vec3<f32> {
     let spread = 0.5 / 1.3;
@@ -571,6 +602,10 @@ fn backdrop(uv: vec2<f32>) -> vec3<f32> {
     if (mode < 1.5) {
         // Flat, the stars drift slowly. In 3D they are fixed in the sky all
         // round, and seen through the black ground, so they move with the camera.
+        if (u.sim.w > 0.0) {
+            // In flight the view is straight ahead, flat or 3D.
+            return vec3<f32>(0.80, 0.88, 1.00) * star_flight((uv - 0.5) * vec2<f32>(u.circle.w, 1.0)) * u.post.z;
+        }
         var p = (uv - 0.5) * vec2<f32>(u.circle.w, 1.0) + u.relief.w * vec2<f32>(0.004, 0.0012);
         if (u.relief.x > 0.5) {
             let ray = view_ray(uv);
