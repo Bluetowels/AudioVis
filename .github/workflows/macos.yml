@@ -1,13 +1,14 @@
 # Builds the macOS app and disk image, checks that it starts, and keeps both
-# as downloadable artifacts. Runs when the app or its packaging changes, on a
-# version tag, or when started by hand (Actions > macOS build > Run workflow).
+# as downloadable artifacts. Runs when the app or its packaging changes, when
+# started by hand (Actions > macOS build > Run workflow), and as part of the
+# release workflow.
 name: macOS build
 
 on:
   workflow_dispatch:
+  workflow_call:
   push:
     branches: [main, macos-port]
-    tags: ['v*']
     paths:
       - 'visualiser/**'
       - 'installer/macos/**'

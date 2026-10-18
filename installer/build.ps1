@@ -1,14 +1,19 @@
 # Builds the release exe and the installer: installer\output\AudioVis-Setup-<version>.exe
+# With -NoBuild the exe already in the target folder is packaged as it is,
+# which is how the release workflow packs an exe that has been signed.
+param([switch]$NoBuild)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 
 $version = (Select-String -Path "$root\visualiser\Cargo.toml" -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
 $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "$root\visualiser\target" }
 
-Push-Location "$root\visualiser"
-cargo build --release
-Pop-Location
-if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+if (-not $NoBuild) {
+    Push-Location "$root\visualiser"
+    cargo build --release
+    Pop-Location
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+}
 
 $redist = "$PSScriptRoot\redist\vc_redist.x64.exe"
 if (-not (Test-Path $redist)) {

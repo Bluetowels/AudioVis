@@ -1,0 +1,140 @@
+# Builds the Windows exe and installer, and keeps the installer as a
+# downloadable artifact. Runs when the app or its packaging changes (on main
+# or in a pull request), when started by hand (Actions > Windows build > Run
+# workflow), and as part of the release workflow.
+#
+# Signing: once the SIGNPATH_ORGANIZATION_ID variable and SIGNPATH_API_TOKEN
+# secret are set, a release build sends the exe and then the installer to
+# SignPath, waits for each to be approved and signed there, and packages the
+# signed copies. Every other build is left unsigned.
+name: Windows build
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      sign:
+        description: Sign the exe and installer with SignPath
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'visualiser/**'
+      - 'installer/**'
+      - '!installer/macos/**'
+      - 'README.md'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    paths:
+      - 'visualiser/**'
+      - 'installer/**'
+      - '!installer/macos/**'
+      - '.github/workflows/windows.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}-${{ inputs.sign && 'signed' || 'unsigned' }}
+  cancel-in-progress: true
+
+env:
+  SIGN: ${{ inputs.sign && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: visualiser
+
+      - name: Build the exe
+        working-directory: visualiser
+        run: cargo build --release
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Upload the unsigned exe
+        if: env.SIGN == 'true'
+        id: unsigned-exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: AudioVis-Windows-exe-unsigned
+          path: visualiser/target/release/audiovis.exe
+          if-no-files-found: error
+
+      - name: Sign the exe
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'AudioVis' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: exe
+          github-artifact-id: ${{ steps.unsigned-exe.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 18000
+          output-artifact-directory: visualiser/target/release
+
+      - name: Build the installer
+        shell: pwsh
+        run: installer/build.ps1 -NoBuild
+
+      - name: Upload the unsigned installer
+        if: env.SIGN == 'true'
+        id: unsigned-installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AudioVis-Windows-installer-unsigned
+          path: installer/output/AudioVis-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Sign the installer
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'AudioVis' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 18000
+          output-artifact-directory: installer/output
+
+      - name: Check the signatures
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          foreach ($file in @('visualiser/target/release/audiovis.exe') + (Get-ChildItem installer/output/AudioVis-Setup-*.exe).FullName) {
+            $sig = Get-AuthenticodeSignature $file
+            Write-Host "$file : $($sig.Status) $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "$file is not validly signed" }
+          }
+
+      - name: Note that the build is unsigned
+        if: inputs.sign && env.SIGN != 'true'
+        run: echo "::warning::SignPath is not set up yet (no SIGNPATH_ORGANIZATION_ID variable), so this installer is unsigned."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AudioVis-Windows
+          path: installer/output/AudioVis-Setup-*.exe
+          if-no-files-found: error

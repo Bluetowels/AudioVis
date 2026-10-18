@@ -1,0 +1,76 @@
+# Builds every platform from a version tag and puts the results in a draft
+# GitHub release, ready to check and publish:
+#   git tag v0.5.0 && git push origin v0.5.0
+# The release notes are that version's section of CHANGELOG.md.
+#
+# The Windows exe and installer are signed through SignPath once it is set
+# up (see windows.yml); each one then waits for approval on signpath.io
+# before the release appears. The Android APK is signed with the key in the
+# ANDROID_KEYSTORE... secrets (see android.yml).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    uses: ./.github/workflows/windows.yml
+    with:
+      sign: true
+    secrets: inherit
+
+  macos:
+    uses: ./.github/workflows/macos.yml
+    secrets: inherit
+
+  android:
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+
+  release:
+    needs: [windows, macos, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Check the tag matches the version
+        id: version
+        run: |
+          version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' visualiser/Cargo.toml | head -n 1)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in visualiser/Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # This version's section of the changelog, without its heading.
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "## " v " ") == 1 || $0 == "## " v) { found = 1; next } }
+            found
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md." > notes.md
+          ls -l artifacts/*/
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "AudioVis $VERSION" --notes-file notes.md \
+            artifacts/AudioVis-Windows/*.exe \
+            artifacts/AudioVis-macOS/*.dmg \
+            artifacts/AudioVis-Android/*.apk

@@ -1,14 +1,15 @@
 # Builds the Android app (an APK to copy to a phone and install), then starts
 # it in an emulator and keeps a screenshot. Runs when the app or its
-# packaging changes, on a version tag, or when started by hand
-# (Actions > Android build > Run workflow).
+# packaging changes, when started by hand
+# (Actions > Android build > Run workflow), and as part of the release
+# workflow.
 name: Android build
 
 on:
   workflow_dispatch:
+  workflow_call:
   push:
     branches: [main, android-port]
-    tags: ['v*']
     paths:
       - 'visualiser/**'
       - 'android/**'
@@ -60,6 +61,8 @@ jobs:
           if [ -n "$KEYSTORE" ]; then
             echo "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/audiovis.keystore"
             echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/audiovis.keystore" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret, so this APK is signed with a throwaway key and won't install over an earlier version."
           fi
 
       - name: Build the APK
