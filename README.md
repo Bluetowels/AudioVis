@@ -111,6 +111,12 @@ gradle -p android assembleRelease
 This needs the Android SDK and NDK (`ANDROID_HOME`, `ANDROID_NDK_HOME`), JDK 17 and Gradle 8.9 or later. The script builds the Rust library for phones and for the emulator, and Gradle packs it with a small Java layer (`android/app/src/main/java`) into `android/app/build/outputs/apk/release/app-release.apk`. The same steps run on GitHub Actions (`.github/workflows/android.yml`), which keeps the APK as a downloadable artifact of each run, then starts it in an emulator and keeps a screenshot.
 
 The APK is signed with a throwaway key unless a keystore is supplied through `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` (on GitHub, the secrets of the same names, with the keystore itself as `ANDROID_KEYSTORE_BASE64`). A build signed with a different key will not install over an older one: uninstall that first.
+
+### Releases
+
+Pushing a version tag (`git tag v0.5.0`, `git push origin v0.5.0`) runs `.github/workflows/release.yml`, which builds Windows, macOS and Android on GitHub Actions and creates a draft release holding the installer, the disk image and the APK, with that version's section of `CHANGELOG.md` as its notes. The tag must match the version in `visualiser/Cargo.toml`. Check the draft, then publish it.
+
+The Windows exe and installer are signed through [SignPath](https://about.signpath.io) when the repository has a `SIGNPATH_ORGANIZATION_ID` variable and a `SIGNPATH_API_TOKEN` secret; the workflow then waits while each is approved on signpath.io. The SignPath project needs two artifact configurations, `exe` and `installer`, each a `<zip-file>` holding one `<pe-file>`.
 <!-- /source-only -->
 
 ## Running
@@ -414,6 +420,17 @@ Faders glide between steps, and frequency and time controls move logarithmically
 ## Presets and saved settings
 
 Settings are saved automatically to `%APPDATA%\AudioVis\settings.json`, including the audio source, the controller mapping and which panel sections are folded. Presets are saved to `%APPDATA%\AudioVis\presets\` and hold every slider and switch, but not the audio source, the controller mapping, whether lyrics are shown or the lyrics sync offset. Neither is stored in this repository.
+
+## Code signing policy
+
+Windows releases are signed with free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: the [members of this repository](https://github.com/Bluetowels/AudioVis/graphs/contributors)
+- Approvers: [Bluetowels](https://github.com/Bluetowels), the owner
+
+Only files built by this repository's release workflow on GitHub Actions, from a tagged commit, are signed, and each signing is approved by hand.
+
+**Privacy.** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The one feature that uses the network is "Show lyrics", which is off by default; while it's on, the title, artist, album and length of each track are sent to [lrclib.net](https://lrclib.net) to look up its lyrics.
 
 ## Troubleshooting
 
