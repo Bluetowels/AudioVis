@@ -436,6 +436,70 @@ impl Params {
         self.set(P::Palette, ((self.palette() as i32 + by).rem_euclid(n)) as f32);
     }
 
+    /// Settings part of the way (`t`, 0..1) from `a` to `b`, for morphing
+    /// from one preset to the next. Sliders travel evenly along their own
+    /// scale. Switches and choices change half way, except that a feature
+    /// with a strength of its own (stars, bass boost, the cover background)
+    /// stays on for the whole morph and fades in or out instead. A change of
+    /// layout cannot be blended, so the picture dims briefly as it switches.
+    /// The palette itself is blended in the colours drawn, not here.
+    pub fn blend(a: &Params, b: &Params, t: f32) -> Params {
+        if t <= 0.0 {
+            return a.clone();
+        }
+        if t >= 1.0 {
+            return b.clone();
+        }
+        let late = t >= 0.5;
+        let mut p = if late { b.clone() } else { a.clone() };
+        let fades = [
+            (P::StarBrightness, a.stars, b.stars),
+            (P::BassAmount, a.bass_boost, b.bass_boost),
+            (P::BackdropAmount, a.backdrop == Backdrop::Cover, b.backdrop == Backdrop::Cover),
+        ];
+        for (i, d) in DEFS.iter().enumerate() {
+            let (mut from, mut to) = (a.target[i], b.target[i]);
+            if let Some((_, on_a, on_b)) = fades.iter().find(|f| f.0 == d.id) {
+                (from, to) = (if *on_a { from } else { d.min }, if *on_b { to } else { d.min });
+            }
+            let v = match d.id {
+                P::Palette if late => to,
+                P::Palette => from,
+                _ => d.from_norm(d.to_norm(from) + (d.to_norm(to) - d.to_norm(from)) * t),
+            };
+            (p.target[i], p.current[i]) = (v, v);
+        }
+        p.stars = a.stars || b.stars;
+        p.bass_boost = a.bass_boost || b.bass_boost;
+        if a.backdrop == Backdrop::Cover || b.backdrop == Backdrop::Cover {
+            p.backdrop = Backdrop::Cover;
+        }
+
+        // A colour left to the palette blends with one picked by hand.
+        let mix = |x: [f32; 3], y: [f32; 3]| std::array::from_fn(|c| x[c] + (y[c] - x[c]) * t);
+        let colour = |x: Option<[f32; 3]>, y: Option<[f32; 3]>, own: &dyn Fn(&Params) -> [f32; 3]| match (x, y) {
+            (None, None) => None,
+            _ => Some(mix(x.unwrap_or_else(|| own(a)), y.unwrap_or_else(|| own(b)))),
+        };
+        p.bass_colour = colour(a.bass_colour, b.bass_colour, &|q| PALETTES[q.palette()].accent);
+        p.surround_colour = colour(a.surround_colour, b.surround_colour, &|q| SURROUND_COLOURS[q.palette()]);
+
+        let relaid = a.shape != b.shape
+            || a.mirror != b.mirror
+            || a.flip_x != b.flip_x
+            || a.flip_y != b.flip_y
+            || a.stereo != b.stereo
+            || a.material != b.material
+            || a.bass_style != b.bass_style;
+        if relaid {
+            let dip = (1.0 - (t - 0.5).abs() / 0.2).clamp(0.0, 1.0);
+            let k = P::Brightness as usize;
+            p.target[k] *= 1.0 - 0.9 * dip * dip * (3.0 - 2.0 * dip);
+            p.current[k] = p.target[k];
+        }
+        p
+    }
+
     pub fn to_saved(&self) -> SavedParams {
         SavedParams {
             values: DEFS.iter().map(|d| (d.key.to_string(), self.target(d.id))).collect(),
@@ -657,3 +721,38 @@ pub const PALETTES: [Palette; N_PALETTES] = [
         accent: [0.20, 0.50, 1.00],
     },
 ];
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blend_travels_sliders_and_fades_features() {
+        let a = Params::default();
+        let mut b = Params::default();
+        b.set(P::Combine, 1.0);
+        b.set(P::BassCutoff, 400.0);
+        b.set(P::Palette, 5.0);
+        b.stars = !a.stars;
+        let half = Params::blend(&a, &b, 0.25);
+        assert!((half.get(P::Combine) - 0.25).abs() < 1e-4);
+        // Logarithmic sliders move evenly in octaves, not hertz.
+        let log_quarter = 150.0 * (400.0f32 / 150.0).powf(0.25);
+        assert!((half.get(P::BassCutoff) - log_quarter).abs() < 0.1);
+        assert_eq!(half.palette(), a.palette());
+        assert_eq!(Params::blend(&a, &b, 0.75).palette(), 5);
+        // Stars come on at once, at no brightness, and brighten.
+        assert!(half.stars);
+        let star = |p: &Params| p.get(P::StarBrightness);
+        assert!(star(&half) < star(&Params::blend(&a, &b, 0.75)));
+        assert_eq!(Params::blend(&a, &b, 1.0).stars, b.stars);
+    }
+
+    #[test]
+    fn blend_dims_through_a_change_of_layout() {
+        let a = Params::default();
+        let mut b = Params::default();
+        b.shape = Shape::Circle;
+        assert!(Params::blend(&a, &b, 0.5).get(P::Brightness) < 0.2);
+        assert!((Params::blend(&a, &b, 0.2).get(P::Brightness) - 1.0).abs() < 1e-4);
+    }
+}

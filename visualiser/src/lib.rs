@@ -7,6 +7,7 @@ mod android;
 mod audio;
 #[cfg_attr(not(any(windows, target_os = "android")), allow(dead_code))]
 mod cover;
+mod cycle;
 #[cfg_attr(not(any(windows, target_os = "android")), allow(dead_code))]
 mod lyrics;
 mod midi;
@@ -76,6 +77,9 @@ struct Settings {
     /// Bring the title in from the distance instead of showing it in the corner.
     #[serde(default)]
     track_card_fly: bool,
+    /// Running through the presets by itself.
+    #[serde(default)]
+    cycle: cycle::CycleSettings,
 }
 
 #[cfg(windows)]
@@ -555,6 +559,10 @@ struct App {
     cover_look: Option<(usize, cover::Look)>,
     /// How far palette drift has gone, in palettes.
     palette_drift: f32,
+    /// Running through the presets by itself.
+    cycle: cycle::Cycle,
+    /// While the cycle morphs between presets, the colours part way between theirs.
+    morph_look: Option<cover::Look>,
     /// How far the flight through the stars has gone; 0 when it is off.
     star_travel: f32,
     /// How fast that flight is going, in sheets of stars passed each second.
@@ -647,6 +655,7 @@ impl App {
         let track_card = options.track_card || options.track_card_fly || (options.selftest.is_none() && saved.as_ref().is_none_or(|s| s.track_card));
         let lyrics = options.lyrics || (options.selftest.is_none() && saved.as_ref().is_some_and(|s| s.lyrics));
         let lyrics_offsets = saved.as_ref().filter(|_| options.selftest.is_none()).map(|s| s.lyrics_offsets.clone()).unwrap_or_default();
+        let cycle_settings = saved.as_ref().filter(|_| options.selftest.is_none()).map(|s| s.cycle).unwrap_or_default();
         let lyrics_file = options.lyrics_file.as_deref().and_then(lyrics::sidecar).map(Into::into);
         let (mut params, mut bindings, saved_source, show_hints, show_fps, show_fps_graph, collapsed) = match saved {
             // A self-test always runs on defaults so results are comparable.
@@ -739,6 +748,8 @@ impl App {
             look,
             cover_look: None,
             palette_drift: 0.0,
+            cycle: cycle::Cycle::new(cycle_settings),
+            morph_look: None,
             star_travel: 0.0,
             star_rate: 0.0,
             star_heading: [0.0; 2],
@@ -805,6 +816,7 @@ impl App {
             lyrics_offsets: self.lyrics_offsets.clone(),
             track_card: self.track_card,
             track_card_fly: self.track_card_fly,
+            cycle: self.cycle.settings,
         };
         serde_json::to_string_pretty(&settings).ok()
     }
@@ -909,15 +921,112 @@ impl App {
         self.presets = preset_names();
     }
 
-    fn load_preset(&mut self, name: &str) {
+    /// A saved preset's settings, keeping the lyrics offset in use: that
+    /// belongs to the music app, not the preset.
+    fn read_preset(&self, name: &str) -> Option<Params> {
         let path = config_dir().join("presets").join(format!("{name}.json"));
-        if let Some(saved) = std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<SavedParams>(&t).ok()) {
-            // The lyrics offset belongs to the music app, not the preset.
-            let offset = self.params.target(P::LyricsOffset);
-            self.params = Params::from_saved(&saved);
-            self.params.set(P::LyricsOffset, offset);
+        let saved = std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<SavedParams>(&t).ok())?;
+        let mut params = Params::from_saved(&saved);
+        params.set(P::LyricsOffset, self.params.target(P::LyricsOffset));
+        Some(params)
+    }
+
+    /// The panel's controls for the preset cycle.
+    fn cycle_controls(&mut self, ui: &mut egui::Ui) {
+        let r = ui.checkbox(&mut self.cycle.settings.on, "Cycle through presets");
+        self.describe(&r, "Run through the saved presets by itself: each is held for a while, then every slider, colour and switch morphs smoothly into the next preset's. Changes you make while a preset is held stay until the next morph, which starts from wherever they are.");
+        if !self.cycle.settings.on {
+            return;
+        }
+        if self.presets.len() < 2 {
+            ui.small("Save at least two presets to cycle through.");
+            return;
+        }
+        ui.horizontal(|ui| {
+            let r = ui.radio_value(&mut self.cycle.settings.random, false, "In order");
+            self.describe(&r, "Go down the list of presets, back to the first after the last.");
+            let r = ui.radio_value(&mut self.cycle.settings.random, true, "Random");
+            self.describe(&r, "Go to any other preset at random, never the same one twice running.");
+        });
+        ui.label("Hold each preset");
+        let r = ui.add(egui::Slider::new(&mut self.cycle.settings.hold, 0.0..=600.0).logarithmic(true).suffix(" s"));
+        self.describe(&r, "How long each preset stays as it is before the morph to the next begins. 0 morphs on without stopping.");
+        ui.label("Morph time");
+        let r = ui.add(egui::Slider::new(&mut self.cycle.settings.morph, 0.0..=300.0).logarithmic(true).suffix(" s"));
+        self.describe(&r, "How long the morph from one preset to the next takes. Sliders and colours travel there smoothly; switches and choices change half way, and a change of layout (such as cross to circle, or mirroring) dims the picture briefly as it switches. 0 jumps straight to the next.");
+        let status = match &self.cycle.morph {
+            Some(morph) => format!("Morphing into {} ({:.0}%)", morph.name, 100.0 * self.cycle.clock / self.cycle.settings.morph.max(0.05)),
+            None => format!("Next morph in {:.0} s", (self.cycle.settings.hold - self.cycle.clock).max(0.0)),
+        };
+        ui.small(status);
+    }
+
+    fn load_preset(&mut self, name: &str) {
+        if let Some(params) = self.read_preset(name) {
+            self.params = params;
             self.controller.release_all();
             self.preset_name = name.to_string();
+            self.cycle.restart();
+            self.morph_look = None;
+        }
+    }
+
+    /// The preset cycle: hold the settings for a while, then morph them
+    /// into the next preset's. Changes made by hand while a preset is held
+    /// are kept until the next morph, which starts from wherever they are.
+    fn update_cycle(&mut self, dt: f32) {
+        if !self.cycle.settings.on || self.presets.len() < 2 {
+            self.cycle.restart();
+            self.morph_look = None;
+            return;
+        }
+        self.cycle.clock += dt;
+        if self.cycle.morph.is_none() {
+            if self.cycle.clock < self.cycle.settings.hold {
+                return;
+            }
+            let names = self.presets.clone();
+            let next = self.cycle.next(&names, &self.preset_name);
+            let Some((name, to)) = next.and_then(|name| self.read_preset(&name).map(|to| (name, to))) else {
+                // Gone or unreadable: look again after another hold.
+                self.presets = preset_names();
+                self.cycle.restart();
+                return;
+            };
+            self.cycle.clock = 0.0;
+            self.cycle.morph = Some(cycle::Morph { name, from: self.params.clone(), to });
+            self.controller.release_all();
+        }
+        let t = self.cycle.progress();
+        let Some(morph) = &self.cycle.morph else { return };
+        let offset = self.params.target(P::LyricsOffset);
+        self.params = Params::blend(&morph.from, &morph.to, t);
+        self.params.set(P::LyricsOffset, offset);
+        self.morph_look = (t < 1.0).then(|| {
+            // Each side as it is drawn, then turned round to undo the reversal applied when drawing.
+            let side = |p: &Params| {
+                let mut stops = eight_stops(&palette_look(p).stops);
+                if p.reverse_palette {
+                    stops.reverse();
+                }
+                stops
+            };
+            let mut look = blend_looks(
+                &cover::Look { stops: side(&morph.from), ..palette_look(&morph.from) },
+                &cover::Look { stops: side(&morph.to), ..palette_look(&morph.to) },
+                t,
+            );
+            if self.params.reverse_palette {
+                look.stops.reverse();
+            }
+            look
+        });
+        if t >= 1.0 {
+            if let Some(morph) = self.cycle.morph.take() {
+                self.preset_name = morph.name;
+            }
+            self.cycle.restart();
+            self.controller.release_all();
         }
     }
 
@@ -1296,25 +1405,8 @@ impl App {
         // Each palette is held for a while, then blends into the next.
         let t = ((at.fract() - 0.35) / 0.65).clamp(0.0, 1.0);
         let t = t * t * (3.0 - 2.0 * t);
-        let mix = |a: [f32; 3], b: [f32; 3]| std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
-        // Palettes have four or eight colours; as eight they can be blended one for one.
-        let eight = |i: usize| -> Vec<[f32; 3]> {
-            let stops = PALETTES[i].stops;
-            (1..=8)
-                .map(|k| {
-                    let s = k as f32 / 8.0 * stops.len() as f32;
-                    let upper = (s.ceil() as usize).clamp(1, stops.len());
-                    let below = if upper == 1 { [0.0; 3] } else { stops[upper - 2] };
-                    let part = s - (upper - 1) as f32;
-                    std::array::from_fn(|c| below[c] + (stops[upper - 1][c] - below[c]) * part)
-                })
-                .collect()
-        };
-        cover::Look {
-            stops: eight(from).into_iter().zip(eight(to)).map(|(a, b)| mix(a, b)).collect(),
-            accent: mix(PALETTES[from].accent, PALETTES[to].accent),
-            surround: mix(params::SURROUND_COLOURS[from], params::SURROUND_COLOURS[to]),
-        }
+        let look = |i: usize| cover::Look { stops: PALETTES[i].stops.to_vec(), accent: PALETTES[i].accent, surround: params::SURROUND_COLOURS[i] };
+        blend_looks(&look(from), &look(to), t)
     }
 
     /// Move the colours in use towards the ones wanted: the chosen palette's,
@@ -1329,7 +1421,10 @@ impl App {
                 }
                 self.cover_look.as_ref().map(|(_, look)| look.clone()).unwrap_or_else(|| palette_look(&self.params))
             }
-            None => self.drifting_look(dt),
+            None => match &self.morph_look {
+                Some(look) => look.clone(),
+                None => self.drifting_look(dt),
+            },
         };
         if cover.is_none() || wanted.stops.len() != self.look.stops.len() {
             // Changing palette by hand is immediate.
@@ -2527,7 +2622,10 @@ impl App {
             if r.clicked() {
                 self.params = Params::default();
                 self.controller.release_all();
+                self.cycle.restart();
+                self.morph_look = None;
             }
+            self.cycle_controls(ui);
             }
             ui.separator();
 
@@ -2676,6 +2774,30 @@ fn palette_look(params: &Params) -> cover::Look {
     cover::Look { stops: palette.stops.to_vec(), accent: palette.accent, surround: params::SURROUND_COLOURS[params.palette()] }
 }
 
+/// A palette's colours as eight. Palettes have four or eight, and as eight
+/// any two can be blended one for one.
+fn eight_stops(stops: &[[f32; 3]]) -> Vec<[f32; 3]> {
+    (1..=8)
+        .map(|k| {
+            let s = k as f32 / 8.0 * stops.len() as f32;
+            let upper = (s.ceil() as usize).clamp(1, stops.len());
+            let below = if upper == 1 { [0.0; 3] } else { stops[upper - 2] };
+            let part = s - (upper - 1) as f32;
+            std::array::from_fn(|c| below[c] + (stops[upper - 1][c] - below[c]) * part)
+        })
+        .collect()
+}
+
+/// Colours part of the way (`t`, 0..1) from one look to another.
+fn blend_looks(a: &cover::Look, b: &cover::Look, t: f32) -> cover::Look {
+    let mix = |x: [f32; 3], y: [f32; 3]| std::array::from_fn(|i| x[i] + (y[i] - x[i]) * t);
+    cover::Look {
+        stops: eight_stops(&a.stops).into_iter().zip(eight_stops(&b.stops)).map(|(x, y)| mix(x, y)).collect(),
+        accent: mix(a.accent, b.accent),
+        surround: mix(a.surround, b.surround),
+    }
+}
+
 /// One word of a line of lyrics as laid out on screen: when it is sung and
 /// where it sits in the layout.
 struct LyricWord {
@@ -2811,6 +2933,7 @@ impl eframe::App for App {
             &mut self.lyrics,
             &mut self.card_fly_asked,
         );
+        self.update_cycle(dt);
         self.params.glide(dt);
         // The panel is drawn at the picture's base brightness.
         eframe::egui_wgpu::HDR_UI_SCALE.store((self.params.get(P::HdrBase) / 80.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
