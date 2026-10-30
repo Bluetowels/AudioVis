@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Preset cycle, all systems.** The Presets section can run through the saved presets by itself, in order or at random (never the same one twice running). Each is held for a set time, then every slider and colour morphs smoothly into the next preset's over a set time. Switches change half way through; stars, bass boost and the cover background fade in and out rather than popping; and a change of layout, such as cross to circle or a different mirror, dims the picture briefly as it switches.
+
 ## 0.4.1 (2026-10-10)
 
 An Android release; the Windows and macOS apps are the same as 0.4.0 apart from the version number.

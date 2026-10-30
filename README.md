@@ -18,7 +18,7 @@ Every pixel stands for a pair of frequencies, and its colour shows how loud thos
 - **HDR (Windows).** On an HDR display the loudest parts of the picture can be brighter than ordinary white, with adjustable base and peak brightness.
 - **Palettes.** Ten built-in palettes: Ember, Ice, Aurora, Neon, Sunset, Mono, Rainbow, Zigzag, Candy and Contour. Any of them can be reversed or banded.
 - **MIDI control.** It's mapped out of the box to a Korg nanoKONTROL2, and any slider can be re-assigned with MIDI learn.
-- **Presets.** Save and load named snapshots of every slider and switch.
+- **Presets.** Save and load named snapshots of every slider and switch, or let the app cycle through them, in order or at random, morphing smoothly from each to the next.
 
 ## How it works
 
